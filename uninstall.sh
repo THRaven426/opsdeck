@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Desinstala opsdeck. Por defecto conserva configuración, datos y registros de auditoría.
+#   sudo /opt/opsdeck/uninstall.sh            pregunta
+#   sudo /opt/opsdeck/uninstall.sh --todo     borra también datos, registros y configuración
+set -euo pipefail
+NAME="opsdeck"
+DEST="/opt/$NAME"; BIN="/usr/local/bin/$NAME"
+CONF_DIR="/etc/$NAME"; DATA_DIR="/var/lib/$NAME"; LOG_DIR="/var/log/$NAME"
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+
+ALL=0; [[ "${1:-}" == "--todo" ]] && ALL=1
+echo "Se eliminará: $DEST y $BIN"
+if (( ! ALL )); then
+  read -rp "¿Borrar también datos, copias, registros de auditoría y configuración? [s/N] " a || a=""
+  [[ "${a,,}" == s* ]] && ALL=1
+fi
+(( ALL )) && echo "Y además: $DATA_DIR $LOG_DIR $CONF_DIR"
+read -rp "¿Desea continuar? [S/n] " a || a="n"
+[[ -z "$a" || "${a,,}" == s* ]] || { echo "Cancelado."; exit 1; }
+
+rm -f "$BIN"
+rm -rf "$DEST"
+if (( ALL )); then rm -rf "$DATA_DIR" "$LOG_DIR" "$CONF_DIR"; fi
+echo "$NAME desinstalado.$( (( ALL )) || echo " Se conservan $DATA_DIR, $LOG_DIR y $CONF_DIR.")"
+echo "Los paquetes que se instalaron para los módulos (xrdp, etc.) no se tocan."

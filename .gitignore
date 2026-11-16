@@ -1,0 +1,15 @@
+# Entornos y cachés
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Nunca subir datos de un equipo real
+*.log
+*.tar.gz
+*.csv
+informes/
+backups/
+resultados/
+*.conf
+!opsdeck.conf.example

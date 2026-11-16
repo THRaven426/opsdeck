@@ -1,0 +1,133 @@
+Screen {
+    layout: vertical;
+}
+
+#body {
+    height: 1fr;
+}
+
+#sidebar {
+    width: 32;
+    border-right: solid $primary-darken-2;
+    padding: 0 1;
+}
+
+#sidebar .section {
+    color: $text-muted;
+    text-style: bold;
+    margin-top: 1;
+}
+
+#modules {
+    height: 1fr;
+    border: none;
+}
+
+#main {
+    width: 1fr;
+    padding: 0 1;
+}
+
+#mod-title {
+    text-style: bold;
+    color: $accent;
+    margin-top: 1;
+}
+
+#mod-summary {
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+#actions {
+    height: auto;
+    max-height: 45%;
+    border: round $primary-darken-2;
+}
+
+#output {
+    height: 1fr;
+    border: round $primary-darken-3;
+    margin-top: 1;
+}
+
+#status {
+    height: 1;
+    color: $text-muted;
+}
+
+/* ---------- ventanas ---------- */
+
+ModalScreen {
+    align: center middle;
+}
+
+.dialog {
+    width: 90;
+    max-width: 95%;
+    height: auto;
+    max-height: 90%;
+    border: thick $primary;
+    background: $surface;
+    padding: 1 2;
+}
+
+.dialog .dialog-title {
+    text-style: bold;
+    color: $accent;
+    margin-bottom: 1;
+}
+
+.dialog .hint {
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+.dialog .field-label {
+    margin-top: 1;
+}
+
+.dialog #error {
+    color: $error;
+    height: auto;
+}
+
+.dialog .buttons {
+    height: auto;
+    margin-top: 1;
+    align-horizontal: right;
+}
+
+.dialog .buttons Button {
+    margin-left: 2;
+}
+
+#form-fields {
+    height: auto;
+    max-height: 60vh;
+}
+
+#help-doc {
+    height: auto;
+    max-height: 75vh;
+}
+
+/* ---------- catálogo ---------- */
+
+#catalog-table {
+    height: 1fr;
+}
+
+#catalog-log {
+    height: 12;
+    border: round $primary-darken-3;
+}
+
+#catalog-buttons {
+    height: auto;
+    padding: 1 0;
+}
+
+#catalog-buttons Button {
+    margin-right: 2;
+}

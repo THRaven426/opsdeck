@@ -1,0 +1,44 @@
+# Configuración de opsdeck (/etc/opsdeck/opsdeck.conf)
+# Solo se carga si pertenece a root y nadie más puede escribirla.
+# Las líneas que empiezan por # son comentarios: quita el # para cambiar un valor.
+
+[general]
+# Edición instalada: ligera o completa. La cambia el instalador (sudo ./install.sh --edicion completa).
+edicion = ligera
+# Grupo del sistema cuyos miembros pueden usar los módulos avanzados de la edición completa.
+# grupo_completa = opsdeck-completa
+# Módulos que no quieres ver en el menú (ids separados por coma). También desde Catálogo.
+# modulos_ocultos =
+
+[auditoria]
+# Registro de cambios en /var/log/opsdeck/auditoria.log (una línea por cambio).
+# fichero = true
+# Copia de cada cambio al registro del sistema (journalctl -t opsdeck).
+# syslog = true
+# Rotar al superar este tamaño (KB) y cuántos ficheros antiguos (.gz) conservar.
+# max_kb = 1024
+# conservar = 5
+
+[copias]
+# Copia de passwd/shadow/group/sudoers antes de cada cambio en cuentas.
+# cuentas = true
+# conservar = 10
+
+[resultados]
+# Resultados guardados por módulo (escaneos, análisis, informes). Se borran los más antiguos. 0 = sin límite.
+# conservar_por_modulo = 50
+
+[usuarios]
+# shell = /bin/bash
+# longitud_password = 16
+# minimo_password = 12
+# grupos_privilegiados = root sudo wheel admin adm docker lxd libvirt disk shadow kvm kali-trusted
+
+[ldap]
+# Conexión por defecto del módulo LDAP (también desde "Guardar conexión"). Nunca se guarda la contraseña.
+# servidor = dc01.empresa.local
+# usuario = consulta@empresa.local
+# base = DC=empresa,DC=local
+# cifrado = ldaps
+# Verificar el certificado del controlador (yes) o aceptarlo aunque sea autofirmado (no).
+# verificar_certificado = no
