@@ -7,6 +7,7 @@ from .bastionado import Bastionado
 from .dominio import Dominio
 from .escaneo import Escaneo
 from .firewall import Firewall
+from .fuentes import Fuentes
 from .integridad import Integridad
 from .ldap import Ldap
 from .nuclei import Nuclei
@@ -29,5 +30,5 @@ MODULES = [
     # Blue team
     Revision, Triaje, Bastionado, Antimalware, Rootkits, Integridad,
     # Ciberseguridad
-    Escaneo, Trafico, Smb, Web, Nuclei,
+    Escaneo, Trafico, Smb, Web, Nuclei, Fuentes,
 ]

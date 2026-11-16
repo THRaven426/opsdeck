@@ -8,7 +8,7 @@ Administra equipos, únelos a Active Directory, revisa su seguridad, analiza red
 y responde a incidentes, desde un menú visual en la terminal o en una línea de comando.
 
 [![Estrellas](https://img.shields.io/github/stars/THRaven426/opsdeck?style=for-the-badge&logo=github&color=f5c518)](https://github.com/THRaven426/opsdeck/stargazers)
-[![Versión](https://img.shields.io/badge/versión-2.1.0-2ea44f?style=for-the-badge)](https://github.com/THRaven426/opsdeck/commits/main)
+[![Versión](https://img.shields.io/badge/versión-2.2.0-2ea44f?style=for-the-badge)](https://github.com/THRaven426/opsdeck/commits/main)
 ![Python](https://img.shields.io/badge/python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white)
 ![Plataforma](https://img.shields.io/badge/Debian_·_Ubuntu_·_Kali-probado-a81d33?style=for-the-badge&logo=linux&logoColor=white)
 ![Ediciones](https://img.shields.io/badge/ediciones-ligera_·_completa-8250df?style=for-the-badge)
@@ -175,6 +175,12 @@ La guía completa está en [HELP.md](HELP.md) y dentro de la herramienta.
 | **SMB y Windows** | completa | SMBv1, firma SMB (relay NTLM), recursos accesibles sin credenciales o con una cuenta |
 | **Web y TLS** | completa | Certificados que caducan, TLS obsoleto y cabeceras, de una web o de todas las del último escaneo; whatweb, nikto, testssl y rutas si están instalados |
 | **Vulnerabilidades (nuclei)** | completa | Vulnerabilidades conocidas comprobadas con plantillas |
+| **Fuentes de datos** | ligera / completa | Antigüedad y actualización de las bases de detección: plantillas de nuclei, exploit-db y parches |
+
+Tras un escaneo, un análisis SMB o una revisión web, opsdeck añade un apartado **«Recomendaciones
+(siguiente paso)»**: por cada hallazgo propone qué confirmar, mitigar o parchear, señala la acción o
+herramienta que toca y, cuando aplica, consulta en exploit-db si hay **exploit público** para priorizar.
+Recomienda y señala; no explota ni lanza nada por su cuenta, y respeta la barandilla de alcance.
 
 > La administración del propio Active Directory (altas, grupos, GPO) queda fuera a propósito:
 > opsdeck configura y revisa el lado Linux.
@@ -240,7 +246,9 @@ Las pruebas crean y borran cuentas y ficheros de prueba: ejecútalas en una máq
 - [x] Análisis: escaneo, tráfico, SMB, web y TLS, nuclei
 - [x] Ediciones ligera y completa
 - [x] Barandilla de alcance de red (confinamiento a redes autorizadas, registrado)
-- [ ] Hallazgos unificados y recomendación del siguiente paso según los descubrimientos
+- [x] Recomendación del siguiente paso según los descubrimientos (con consulta de exploit público)
+- [x] Fuentes de detección al día (aviso de plantillas/exploit-db/parches desactualizados)
+- [ ] Hallazgos unificados y persistentes con estado (abierto / corregido / aceptado)
 - [ ] Flujos guiados: alta de equipo, auditoría de red, securizar un equipo
 - [ ] Informe consolidado por equipo y por red
 - [ ] RHEL, SUSE y Arch probados

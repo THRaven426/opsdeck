@@ -9,7 +9,7 @@ import os
 import re
 import tempfile
 
-from ..core import audit, nmapxml, results, scope, system
+from ..core import audit, nmapxml, recomendacion, results, scope, system
 from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.ops import stream
 from .escaneo import _subnets, _targets
@@ -66,6 +66,7 @@ def seguridad(ctx: Context, v: dict) -> bool:
     results.write(d / "resumen.txt", "\n".join(f"{r['ip']}\t{r['nombre']}\t{r['so']}\tSMBv1={r['smbv1']}\tfirma={r['firma']}"
                                                 for r in rows) + "\n")
     audit.record("smb_resultado", " ".join(t), "OK", f"smbv1={len(v1)} sin_firma={len(nosign)}")
+    recomendacion.render(ctx, recomendacion.from_smb(rows))
     return True
 
 
@@ -123,6 +124,7 @@ def compartidos(ctx: Context, v: dict) -> bool:
     risky = [r[0] for r in rows if r[1] not in ("<none>", "?") and not r[0].endswith("$")]
     if risky:
         ctx.out.check(False, f"[ALTO] Recursos accesibles sin contraseña: {', '.join(risky)}")
+    recomendacion.render(ctx, recomendacion.from_smb_shares(host, risky))
     return True
 
 

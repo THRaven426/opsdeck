@@ -180,3 +180,12 @@ dar/quitar sudo, añadir/quitar de grupo. Para casos graves hay copias de las cu
 **Dice que el objetivo está fuera del alcance autorizado.** Es la barandilla de red. Si de verdad tienes
 permiso sobre esa red, añádela en *Escaneo de red › Alcance autorizado* o marca «Autorizo trabajar fuera
 del alcance» en el formulario y repite.
+
+**¿Qué son las «Recomendaciones (siguiente paso)»?** Después de un escaneo, un análisis SMB o una revisión
+web, opsdeck lee los hallazgos y te dice qué hacer con cada uno: confirmarlo, mitigarlo o parchearlo, con
+qué acción o herramienta, y si hay exploit público para priorizar. Recomienda y señala; ejecutar la prueba
+lo decides tú. Funciona igual con una vulnerabilidad reciente que con una antigua.
+
+**¿opsdeck conoce las vulnerabilidades nuevas?** No usa el conocimiento del modelo (congelado): detecta con
+fuentes que se actualizan a diario (plantillas de nuclei, exploit-db, parches del sistema). Míralas y
+actualízalas en *Fuentes de datos*. Si están viejas, te avisa antes de analizar.

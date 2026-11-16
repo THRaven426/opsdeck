@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 
-from ..core import audit, nmapxml, results, scope
+from ..core import audit, feeds, nmapxml, results, scope
 from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.ops import stream
 from .escaneo import escaneos
@@ -41,6 +41,7 @@ def analizar(ctx: Context, v: dict) -> bool:
     if not targets:
         ctx.out.error("Indica un objetivo o haz antes un 'Escaneo de red' (se usarán sus servicios).")
         return False
+    feeds.warn_if_stale(ctx)
     d = results.new_dir("nuclei", target.replace("/", "_").replace(":", "_")[:40] or "ultimo_escaneo")
     tfile = d / "objetivos.txt"
     results.write(tfile, "\n".join(targets) + "\n")
@@ -69,6 +70,8 @@ def analizar(ctx: Context, v: dict) -> bool:
     ctx.out.table(["Severidad", "Dónde", "Qué"], rows[:80])
     audit.record("nuclei_resultado", target or "ultimo_escaneo", "OK", " ".join(f"{k}={n}" for k, n in sev.items()))
     ctx.out.info(f"Detalle (referencias, cómo reproducirlo) en {out}")
+    from ..core import recomendacion
+    recomendacion.render(ctx, recomendacion.from_nuclei(findings))
     return True
 
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import ipaddress
 
-from ..core import audit, config, edition, nmapxml, results, scope, system
+from ..core import audit, config, edition, feeds, nmapxml, recomendacion, results, scope, system
 from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.ops import stream
 
@@ -91,6 +91,7 @@ def summary(ctx: Context, scan: nmapxml.Scan, maxp: int = 12) -> None:
             ctx.out.line(f"  {ip}  {sid}: {title[:90]}")
     if any(h.max_cvss() for h in up):
         ctx.out.info("CVSS sale del número de versión (vulners): no ve los parches de la distribución. Verifica antes de actuar.")
+    recomendacion.render(ctx, recomendacion.from_scan(scan))
 
 
 def descubrir(ctx: Context, v: dict) -> bool:
@@ -121,6 +122,8 @@ def escanear(ctx: Context, v: dict) -> bool:
     if prof not in LIGHT_PROFILES and not edition.allowed_full()[0]:
         ctx.out.error(f"El perfil '{prof}' es de la edición completa. {edition.allowed_full()[1]}")
         return False
+    if prof == "vulnerabilidades":
+        feeds.warn_if_stale(ctx)
     d = results.new_dir("escaneo", f"{prof}_{v['objetivo'].replace('/', '_')}")
     if prof == "completo":
         rc, xml = _run(ctx, "completo_puertos", ["-sS", "-p-", "-T4", "--min-rate", "1000", "--open", "-n"], t,

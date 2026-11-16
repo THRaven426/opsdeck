@@ -11,7 +11,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
-from ..core import audit, nmapxml, results, scope, system
+from ..core import audit, nmapxml, recomendacion, results, scope, system
 from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.ops import stream
 from .escaneo import escaneos
@@ -177,6 +177,7 @@ def revisar(ctx: Context, v: dict) -> bool:
     else:
         ctx.out.ok("Sin hallazgos.")
     audit.record("web_revisar", url, "OK", f"{len(r['hallazgos'])} hallazgos")
+    recomendacion.render(ctx, recomendacion.from_web(r))
     return True
 
 
@@ -195,9 +196,10 @@ def webs_ultimo(ctx: Context, v: dict) -> bool:
         ctx.out.info("El último escaneo no tiene webs.")
         return True
     ctx.out.info(f"Revisando {len(urls)} webs del escaneo {scans[0].parent.name}...")
-    rows, report = [], []
+    rows, report, findings = [], [], []
     for u in urls:
         r = check_url(u)
+        findings += recomendacion.from_web(r)
         worst = min((x[0] for x in r["hallazgos"]), key=lambda l: ("ALTO", "MEDIO", "BAJO", "?").index(l), default="")
         t = r.get("tls", {})
         rows.append([u, str(r["http"].get("estado", "-")), ", ".join(t.get("versiones", [])) or "-",
@@ -208,6 +210,7 @@ def webs_ultimo(ctx: Context, v: dict) -> bool:
     results.write(d / "informe.txt", "\n\n".join(report) + "\n")
     ctx.out.info(f"Detalle de cada web en {d / 'informe.txt'}. Para una sola: 'Revisar una web'.")
     audit.record("web_revisar_escaneo", scans[0].parent.name, "OK", f"{len(urls)} webs")
+    recomendacion.render(ctx, findings)
     return True
 
 
