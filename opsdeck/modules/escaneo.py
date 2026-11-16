@@ -9,7 +9,9 @@ import re
 import shlex
 from pathlib import Path
 
-from ..core import edition, nmapxml, results, system
+import ipaddress
+
+from ..core import audit, config, edition, nmapxml, results, scope, system
 from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.ops import stream
 
@@ -92,6 +94,8 @@ def summary(ctx: Context, scan: nmapxml.Scan, maxp: int = 12) -> None:
 
 
 def descubrir(ctx: Context, v: dict) -> bool:
+    if not scope.gate(ctx, v["objetivo"], v, "descubrir"):
+        return False
     t = _targets(ctx, v["objetivo"])
     if not t:
         return False
@@ -108,6 +112,8 @@ def descubrir(ctx: Context, v: dict) -> bool:
 
 
 def escanear(ctx: Context, v: dict) -> bool:
+    if not scope.gate(ctx, v["objetivo"], v, "escanear"):
+        return False
     t = _targets(ctx, v["objetivo"])
     if not t:
         return False
@@ -138,6 +144,8 @@ def escanear(ctx: Context, v: dict) -> bool:
 
 
 def personalizado(ctx: Context, v: dict) -> bool:
+    if not scope.gate(ctx, v["objetivo"], v, "personalizado"):
+        return False
     t = _targets(ctx, v["objetivo"])
     if not t:
         return False
@@ -222,6 +230,52 @@ def comparar(ctx: Context, v: dict) -> bool:
     return True
 
 
+def _save_redes(nets: list[str]) -> None:
+    config.set_value("red", "redes_autorizadas", ", ".join(nets))
+
+
+def alcance(ctx: Context, v: dict) -> bool:
+    accion = (v.get("accion") or "ver").strip().lower()
+    red = (v.get("red") or "").strip()
+    if accion in ("añadir", "anadir", "quitar"):
+        if not system.is_root():
+            ctx.out.error("Cambiar el alcance modifica la configuración y necesita root. Abre la herramienta con sudo.")
+            return False
+        try:
+            net = str(ipaddress.ip_network(red, strict=False))
+        except ValueError:
+            ctx.out.error(f"Red no válida; usa notación CIDR, p. ej. 10.0.0.0/24 (recibido: {red!r})")
+            return False
+        actuales = [str(n) for n in scope.configured_networks()]
+        if accion in ("añadir", "anadir"):
+            if net in actuales:
+                ctx.out.info(f"{net} ya estaba autorizada.")
+            else:
+                _save_redes(actuales + [net])
+                audit.record("alcance_añadir", net, "OK")
+                ctx.out.ok(f"Autorizada la red {net}.")
+        else:
+            if net not in actuales:
+                ctx.out.info(f"{net} no estaba en la lista de redes autorizadas.")
+            else:
+                actuales.remove(net)
+                _save_redes(actuales)
+                audit.record("alcance_quitar", net, "OK")
+                ctx.out.ok(f"Retirada la red {net}.")
+    ctx.out.title("Alcance autorizado")
+    conf = [str(n) for n in scope.configured_networks()]
+    solo = config.settings().getboolean("red", "solo_configuradas", fallback=False)
+    ctx.out.line("  Redes configuradas: " + (", ".join(conf) or "ninguna"))
+    if solo:
+        ctx.out.line("  solo_configuradas = true: las subredes locales NO se tienen en cuenta.")
+    else:
+        loc = [str(n) for n in scope.local_networks()]
+        ctx.out.line("  Subredes locales (automáticas): " + (", ".join(loc) or "ninguna"))
+    ctx.out.info("Cualquier objetivo fuera de este alcance se bloquea salvo que se autorice "
+                 "manualmente, y esa autorización queda en el registro de auditoría.")
+    return True
+
+
 def _subnets() -> list[str]:
     out = []
     if system.has_cmd("ip"):
@@ -249,6 +303,11 @@ class Escaneo(Module):
 # Escaneo de red (nmap)
 
 > Úsalo solo contra sistemas propios o con **autorización por escrito**.
+
+**Alcance:** los escaneos se confinan a las redes a las que este equipo está conectado y a las que
+autorices en **Alcance autorizado**. Un objetivo fuera de ahí se bloquea; para seguir hay que marcar
+«Autorizo trabajar fuera del alcance», y queda registrado. Es una barandilla contra errores de alcance,
+no un muro frente a quien tenga root.
 
 **Flujo recomendado:**
 1. **Descubrir equipos** de una red (p. ej. `192.168.0.0/24`): rápido, solo dice quién está encendido
@@ -281,16 +340,23 @@ Debian/Ubuntu suele exagerar (no ve los parches aplicados).
                     help="IP, red (192.168.0.0/24), rango, varios separados por espacio o ruta a un fichero")
         exc = Param("excluir", "Excluir (opcional, separados por coma)", required=False)
         return [
-            Action("descubrir", "Descubrir equipos", descubrir, params=[obj, exc],
+            Action("descubrir", "Descubrir equipos", descubrir, params=[obj, exc, scope.ok_param()],
                    help="Quién está encendido en la red, sin escanear puertos."),
             Action("escanear", "Escanear", escanear, params=[
                 obj, Param("perfil", "Perfil", "choice", "estandar",
                            choices=[(k, v[0]) for k, v in PROFILES.items()
-                                    if k in LIGHT_PROFILES or edition.allowed_full()[0]]), exc],
+                                    if k in LIGHT_PROFILES or edition.allowed_full()[0]]), exc, scope.ok_param()],
                 confirm=_confirm, help="Escaneo con un perfil predefinido; guarda los resultados y muestra el resumen."),
             Action("personalizado", "Escaneo personalizado", personalizado, full=True, params=[
-                obj, Param("opciones", "Opciones de nmap", help="Ej.: -sS -p 22,80,443 -sV --script ssl-enum-ciphers"), exc],
+                obj, Param("opciones", "Opciones de nmap", help="Ej.: -sS -p 22,80,443 -sV --script ssl-enum-ciphers"),
+                exc, scope.ok_param()],
                 help="Para expertos: opciones libres de nmap (la salida la gestiona la herramienta)."),
+            Action("alcance", "Alcance autorizado", alcance, group="Configuración", params=[
+                Param("accion", "Qué hacer", "choice", "ver", required=False,
+                      choices=[("ver", "Ver el alcance actual"), ("añadir", "Añadir una red autorizada"),
+                               ("quitar", "Quitar una red autorizada")]),
+                Param("red", "Red en CIDR (al añadir o quitar)", required=False, help="Ej.: 10.20.0.0/16")],
+                help="Define sobre qué redes está autorizado escanear y probar. Lo demás se bloquea."),
             Action("ver", "Ver escaneos guardados", ver, params=[
                 Param("escaneo", "Número (vacío = listar)", required=False)]),
             Action("comparar", "Comparar escaneos", comparar, params=[

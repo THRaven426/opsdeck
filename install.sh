@@ -148,6 +148,26 @@ PYTHONPATH="$DEST" exec "$DEST/.venv/bin/python" -m $NAME "\$@"
 EOF
 chmod 755 "$BIN"
 
+# Si sudo restringe el PATH (secure_path) y no incluye /usr/local/bin, 'sudo opsdeck' daría
+# "command not found". El lanzador ya se eleva solo (basta 'opsdeck' sin sudo), pero por si
+# alguien escribe 'sudo opsdeck', dejamos también un enlace donde sudo sí busca.
+link_for_sudo(){
+  local sp line dir
+  line="$(grep -rhsE '^[[:space:]]*Defaults[[:space:]]+.*secure_path' /etc/sudoers /etc/sudoers.d 2>/dev/null | tail -n1)" || true
+  [[ -z "$line" ]] && return 0
+  sp="${line#*secure_path}"; sp="${sp#*=}"; sp="${sp%\"}"; sp="${sp#\"}"; sp="${sp%\'}"; sp="${sp#\'}"
+  case ":$sp:" in *":/usr/local/bin:"*) return 0 ;; esac
+  for dir in /usr/sbin /usr/bin /sbin /bin; do
+    case ":$sp:" in
+      *":$dir:"*) ln -sf "$BIN" "$dir/$NAME" 2>/dev/null &&
+          warn "sudo no incluye /usr/local/bin en secure_path; enlazado también en $dir/$NAME"
+          return 0 ;;
+    esac
+  done
+  return 0
+}
+link_for_sudo
+
 say "Preparando configuración y carpetas"
 install -d -m 755 "$CONF_DIR"
 install -d -m 750 "$DATA_DIR" "$LOG_DIR"
@@ -171,8 +191,8 @@ fi
 
 echo
 "$BIN" --version >/dev/null && say "${B}$NAME instalado.${N}"
-echo "  Abrir:        sudo $NAME"
+echo "  Abrir:        $NAME            (pide la contraseña de sudo él solo; no escribas 'sudo $NAME')"
 echo "  Ayuda:        $NAME ayuda      (dentro de la herramienta: tecla ?)"
-echo "  Módulos:      $NAME modulos        (instalar todas las herramientas: sudo $NAME instalar todo)"
+echo "  Módulos:      $NAME modulos        (instalar todas las herramientas: $NAME instalar todo)"
 [[ "$EDITION" == completa ]] && echo "  Dar acceso a la edición completa: sudo gpasswd -a <usuario> $FULL_GROUP"
 echo "  Desinstalar:  sudo $DEST/uninstall.sh"

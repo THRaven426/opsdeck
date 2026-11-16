@@ -19,6 +19,10 @@ read -rp "¿Desea continuar? [S/n] " a || a="n"
 [[ -z "$a" || "${a,,}" == s* ]] || { echo "Cancelado."; exit 1; }
 
 rm -f "$BIN"
+# posible enlace de respaldo creado cuando sudo no incluía /usr/local/bin en secure_path
+for d in /usr/sbin /usr/bin /sbin /bin; do
+  [[ -L "$d/$NAME" ]] && rm -f "$d/$NAME"
+done
 rm -rf "$DEST"
 if (( ALL )); then rm -rf "$DATA_DIR" "$LOG_DIR" "$CONF_DIR"; fi
 echo "$NAME desinstalado.$( (( ALL )) || echo " Se conservan $DATA_DIR, $LOG_DIR y $CONF_DIR.")"

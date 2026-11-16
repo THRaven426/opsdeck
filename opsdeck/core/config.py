@@ -28,6 +28,13 @@ DEFAULTS = {
     "resultados": {
         "conservar_por_modulo": "50",   # escaneos/análisis guardados por módulo (los más antiguos se borran)
     },
+    "red": {
+        # Redes (CIDR) sobre las que SÍ está autorizado escanear y probar, además de las
+        # subredes a las que este equipo está conectado. Separadas por coma o espacio.
+        "redes_autorizadas": "",
+        # true = ignorar las subredes locales y permitir SOLO las de redes_autorizadas.
+        "solo_configuradas": "false",
+    },
     "usuarios": {
         "shell": "/bin/bash",
         "longitud_password": "16",
@@ -60,6 +67,14 @@ def save() -> None:
     with open(paths.CONF_FILE, "w", encoding="utf-8") as f:
         cfg.write(f)
     os.chmod(paths.CONF_FILE, 0o644)
+
+
+def set_value(section: str, option: str, value: str) -> None:
+    cfg = settings()
+    if not cfg.has_section(section):
+        cfg.add_section(section)
+    cfg.set(section, option, value)
+    save()
 
 
 def hidden_modules() -> set[str]:

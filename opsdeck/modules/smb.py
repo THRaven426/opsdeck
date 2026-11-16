@@ -9,7 +9,7 @@ import os
 import re
 import tempfile
 
-from ..core import audit, nmapxml, results, system
+from ..core import audit, nmapxml, results, scope, system
 from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.ops import stream
 from .escaneo import _subnets, _targets
@@ -34,6 +34,8 @@ def analyze_host(h: nmapxml.Host) -> dict:
 
 
 def seguridad(ctx: Context, v: dict) -> bool:
+    if not scope.gate(ctx, v["objetivo"], v, "smb_seguridad"):
+        return False
     t = _targets(ctx, v["objetivo"])
     if not t:
         return False
@@ -69,6 +71,8 @@ def seguridad(ctx: Context, v: dict) -> bool:
 
 def compartidos(ctx: Context, v: dict) -> bool:
     host = v["equipo"].strip()
+    if not scope.gate(ctx, host, v, "smb_compartidos"):
+        return False
     if not _targets(ctx, host) or " " in host:
         return False
     user = (v.get("usuario") or "").strip()
@@ -123,6 +127,8 @@ def compartidos(ctx: Context, v: dict) -> bool:
 
 
 def netexec(ctx: Context, v: dict) -> bool:
+    if not scope.gate(ctx, v["objetivo"], v, "netexec"):
+        return False
     t = _targets(ctx, v["objetivo"])
     if not t:
         return False
@@ -158,11 +164,12 @@ class Smb(Module):
     def actions(self):
         obj = Param("objetivo", "Objetivo (red, IPs o fichero)", suggest=_subnets)
         return [
-            Action("seguridad", "Seguridad SMB de una red", seguridad, params=[obj]),
+            Action("seguridad", "Seguridad SMB de una red", seguridad, params=[obj, scope.ok_param()]),
             Action("compartidos", "Recursos compartidos de un equipo", compartidos, params=[
                 Param("equipo", "Equipo (IP o nombre)"),
                 Param("usuario", "Cuenta (opcional, DOMINIO\\usuario)", required=False),
-                Param("password", "Contraseña (si indicas cuenta)", "password", required=False)]),
-            Action("netexec", "Barrido rápido con netexec", netexec, params=[obj],
+                Param("password", "Contraseña (si indicas cuenta)", "password", required=False),
+                scope.ok_param()]),
+            Action("netexec", "Barrido rápido con netexec", netexec, params=[obj, scope.ok_param()],
                    requires=[cmd("netexec", debian="netexec")] if system.has_cmd("netexec") else [cmd("nxc")]),
         ]

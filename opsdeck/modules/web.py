@@ -11,10 +11,14 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
-from ..core import audit, nmapxml, results, system
+from ..core import audit, nmapxml, results, scope, system
 from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.ops import stream
 from .escaneo import escaneos
+
+
+def _scope_ok(ctx: Context, v: dict) -> bool:
+    return scope.gate(ctx, urlparse(norm_url(v["url"])).hostname or "", v, "web")
 
 SEC_HEADERS = {
     "strict-transport-security": "HSTS (obliga a usar HTTPS)",
@@ -144,6 +148,8 @@ def check_url(url: str) -> dict:
 
 
 def revisar(ctx: Context, v: dict) -> bool:
+    if not _scope_ok(ctx, v):
+        return False
     url = norm_url(v["url"])
     r = check_url(url)
     h = r["http"]
@@ -213,15 +219,21 @@ def _tool(ctx, args: list[str], label: str, url: str) -> bool:
 
 
 def whatweb(ctx: Context, v: dict) -> bool:
+    if not _scope_ok(ctx, v):
+        return False
     return _tool(ctx, ["whatweb", "--color=never", "-a", "1", norm_url(v["url"])], "whatweb", norm_url(v["url"]))
 
 
 def nikto(ctx: Context, v: dict) -> bool:
+    if not _scope_ok(ctx, v):
+        return False
     url = norm_url(v["url"])
     return _tool(ctx, ["nikto", "-h", url, "-ask", "no", "-nointeractive", "-maxtime", "15m"], "nikto", url)
 
 
 def testssl(ctx: Context, v: dict) -> bool:
+    if not _scope_ok(ctx, v):
+        return False
     exe = "testssl" if system.has_cmd("testssl") else "testssl.sh"
     u = urlparse(norm_url(v["url"]))
     return _tool(ctx, [exe, "--quiet", "--color", "0", "--warnings", "batch", f"{u.hostname}:{u.port or 443}"],
@@ -229,6 +241,8 @@ def testssl(ctx: Context, v: dict) -> bool:
 
 
 def rutas(ctx: Context, v: dict) -> bool:
+    if not _scope_ok(ctx, v):
+        return False
     url = norm_url(v["url"]).rstrip("/")
     wl = v.get("diccionario") or next((w for w in WORDLISTS if Path(w).exists()), "")
     if not wl or not Path(wl).exists():
@@ -268,16 +282,17 @@ Si están instalados (Kali los trae), aparecen además:
 
     def actions(self):
         url = Param("url", "URL o equipo:puerto", help="Ej.: https://intranet.empresa.local, 192.168.0.2:8443")
+        ok = scope.ok_param()
         return [
-            Action("revisar", "Revisar una web", revisar, params=[url]),
+            Action("revisar", "Revisar una web", revisar, params=[url, ok]),
             Action("escaneo", "Revisar las webs del último escaneo", webs_ultimo),
-            Action("whatweb", "Tecnologías (whatweb)", whatweb, params=[url], requires=[cmd("whatweb")]),
-            Action("nikto", "Vulnerabilidades web (nikto)", nikto, params=[url], requires=[cmd("nikto")],
+            Action("whatweb", "Tecnologías (whatweb)", whatweb, params=[url, ok], requires=[cmd("whatweb")]),
+            Action("nikto", "Vulnerabilidades web (nikto)", nikto, params=[url, ok], requires=[cmd("nikto")],
                    confirm="nikto lanza miles de peticiones y queda registrado en la web. ¿Tienes autorización?"),
-            Action("testssl", "TLS en profundidad (testssl)", testssl, params=[url],
+            Action("testssl", "TLS en profundidad (testssl)", testssl, params=[url, ok],
                    requires=[cmd("testssl" if system.has_cmd("testssl") else "testssl.sh")]),
             Action("rutas", "Buscar rutas ocultas", rutas, params=[
-                url, Param("diccionario", "Diccionario (opcional)", required=False)],
+                url, Param("diccionario", "Diccionario (opcional)", required=False), ok],
                 requires=[cmd("ffuf" if system.has_cmd("ffuf") else "gobuster")],
                 confirm="Se probarán miles de rutas contra la web. ¿Tienes autorización?"),
         ]

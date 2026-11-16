@@ -7,10 +7,11 @@ sepa o no de comandos.
 ## Abrir la herramienta
 
 ```
-sudo opsdeck
+opsdeck
 ```
 
-Si la abres sin `sudo`, se relanza sola con sudo y te pide tu contraseña.
+Escribe solo `opsdeck`: la herramienta se relanza sola con `sudo` y te pide tu contraseña. No uses
+`sudo opsdeck` (en algunos sistemas `sudo` no busca en `/usr/local/bin` y diría «command not found»).
 
 ## Cómo se usa
 
@@ -18,6 +19,7 @@ Si la abres sin `sudo`, se relanza sola con sudo y te pide tu contraseña.
 |---|---|
 | ↑ ↓ e Intro | Moverse y elegir (también con el ratón) |
 | Tab | Pasar de la lista de módulos a la de acciones |
+| Esc | Volver de la lista de acciones a la de módulos |
 | **?** | **Ayuda de lo que tengas seleccionado**: módulo, acción o esta guía |
 | c | Catálogo: todos los módulos y su estado |
 | r | Volver a detectar qué hay instalado en el equipo |
@@ -146,6 +148,10 @@ conservan los 50 resultados más recientes. Todo se ajusta en la configuración.
 - Antes de cada cambio en cuentas se guarda copia de `passwd`, `shadow`, `group` y `sudoers`.
 - No permite bloquear, borrar ni quitar sudo a **tu propia cuenta**, ni tocar root o las cuentas de sistema.
 - Para eliminar un usuario hay que escribir otra vez su nombre, y antes se guarda copia de su carpeta.
+- **Alcance de red.** Los escaneos y las pruebas solo se lanzan contra las redes a las que este equipo
+  está conectado y las que autorices en *Escaneo de red › Alcance autorizado*. Un objetivo fuera de ahí
+  se bloquea; para seguir hay que marcar «Autorizo trabajar fuera del alcance», y queda en la auditoría.
+  No frena a quien tenga root: evita salirse del alcance por error y deja constancia de sobre qué se trabaja.
 
 ## Preguntas frecuentes
 
@@ -168,4 +174,9 @@ te dice exactamente por qué. Lo más habitual: tiene pendiente el cambio de con
 dar/quitar sudo, añadir/quitar de grupo. Para casos graves hay copias de las cuentas en
 `/var/lib/opsdeck/backups`.
 
-**La acción dice que necesita root.** Abre la herramienta con `sudo opsdeck`.
+**La acción dice que necesita root.** Cierra y vuelve a abrir la herramienta escribiendo solo `opsdeck`
+(ella sola pide la contraseña de sudo).
+
+**Dice que el objetivo está fuera del alcance autorizado.** Es la barandilla de red. Si de verdad tienes
+permiso sobre esa red, añádela en *Escaneo de red › Alcance autorizado* o marca «Autorizo trabajar fuera
+del alcance» en el formulario y repite.

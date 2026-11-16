@@ -8,7 +8,7 @@ Administra equipos, únelos a Active Directory, revisa su seguridad, analiza red
 y responde a incidentes, desde un menú visual en la terminal o en una línea de comando.
 
 [![Estrellas](https://img.shields.io/github/stars/THRaven426/opsdeck?style=for-the-badge&logo=github&color=f5c518)](https://github.com/THRaven426/opsdeck/stargazers)
-[![Versión](https://img.shields.io/badge/versión-2.0.0-2ea44f?style=for-the-badge)](https://github.com/THRaven426/opsdeck/commits/main)
+[![Versión](https://img.shields.io/badge/versión-2.1.0-2ea44f?style=for-the-badge)](https://github.com/THRaven426/opsdeck/commits/main)
 ![Python](https://img.shields.io/badge/python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white)
 ![Plataforma](https://img.shields.io/badge/Debian_·_Ubuntu_·_Kali-probado-a81d33?style=for-the-badge&logo=linux&logoColor=white)
 ![Ediciones](https://img.shields.io/badge/ediciones-ligera_·_completa-8250df?style=for-the-badge)
@@ -101,15 +101,18 @@ Python, el comando `opsdeck`, y las carpetas de configuración, datos y registro
 |---|---|
 | Requisitos | Linux con Python 3.10+ (lo instala si falta) y salida a PyPI durante la instalación |
 | Probado en | Ubuntu 24.04. Pensado para Debian, Ubuntu y Kali. RHEL, SUSE y Arch: soporte básico, sin probar |
-| Herramientas de los módulos | Se instalan después, cuando las pidas: `sudo opsdeck instalar todo` o desde el Catálogo |
-| Actualizar | `sudo opsdeck autoactualizar` |
+| Herramientas de los módulos | Se instalan después, cuando las pidas: `opsdeck instalar todo` o desde el Catálogo |
+| Actualizar | `opsdeck autoactualizar` |
 | Desinstalar | `sudo /opt/opsdeck/uninstall.sh` (conserva datos y registros salvo que digas lo contrario) |
 
 ## Primeros pasos
 
 ```bash
-sudo opsdeck
+opsdeck
 ```
+
+> Escribe solo `opsdeck`: la herramienta pide la contraseña de `sudo` ella sola. No hace falta
+> `sudo opsdeck` (y en algunos sistemas `sudo` no encuentra el comando en `/usr/local/bin`).
 
 | Tecla | Qué hace |
 |:---:|---|
@@ -207,6 +210,12 @@ Marca `full = True` si es de la edición completa.
 
 - **Autorización primero.** Los módulos de análisis son para infraestructura propia o con permiso
   por escrito. Las acciones intrusivas lo recuerdan y piden confirmación.
+- **Barandilla de alcance.** Los escaneos y las pruebas se confinan a las redes a las que este equipo
+  está conectado más las que autorices en *Escaneo › Alcance autorizado* (o en `[red] redes_autorizadas`).
+  Un objetivo fuera de ese alcance se **bloquea**: para continuar hay que marcar explícitamente que se
+  tiene autorización, y esa decisión queda registrada en la auditoría. No es un muro contra quien tenga
+  root —sería deshonesto venderlo así— sino un control deliberado que evita salirse del alcance por error
+  y deja constancia de sobre qué red se trabaja.
 - **Capturar tráfico afecta a la privacidad** de quien usa la red: hazlo dentro del procedimiento de
   tu organización. El resumen usa metadatos y no muestra contenido ni credenciales.
 - **Las contraseñas no se guardan ni se registran.** Se pasan a las herramientas por entrada estándar
@@ -230,9 +239,11 @@ Las pruebas crean y borran cuentas y ficheros de prueba: ejecútalas en una máq
 - [x] Blue team: revisión, triaje, bastionado, antimalware, rootkits, integridad
 - [x] Análisis: escaneo, tráfico, SMB, web y TLS, nuclei
 - [x] Ediciones ligera y completa
+- [x] Barandilla de alcance de red (confinamiento a redes autorizadas, registrado)
+- [ ] Hallazgos unificados y recomendación del siguiente paso según los descubrimientos
+- [ ] Flujos guiados: alta de equipo, auditoría de red, securizar un equipo
 - [ ] Informe consolidado por equipo y por red
 - [ ] RHEL, SUSE y Arch probados
-- [ ] OpenVAS
 - [ ] Herramienta hermana para Windows, centrada en administrar Active Directory
 
 ## Licencia

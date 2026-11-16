@@ -478,6 +478,7 @@ class OpsdeckApp(App):
     ENABLE_COMMAND_PALETTE = False
     TITLE = NAME
     BINDINGS = [
+        Binding("escape", "back_to_modules", "Volver a módulos", show=False),
         Binding("question_mark", "help", "Ayuda (?)", key_display="?"),
         Binding("c", "catalog", "Catálogo"),
         Binding("r", "rescan", "Volver a detectar"),
@@ -490,6 +491,8 @@ class OpsdeckApp(App):
     def check_action(self, action: str, parameters) -> Optional[bool]:
         # Con una ventana abierta (formulario, confirmación, ayuda) o en el catálogo, las teclas
         # globales no actúan: así 'q' o 'c' nunca cierran ni cambian nada por accidente.
+        if action == "back_to_modules":
+            return isinstance(self.screen, MainScreen)
         if action in ("help", "catalog", "rescan", "log", "quit", "stop", "results") and not isinstance(self.screen, MainScreen):
             return False
         if action == "stop":
@@ -530,7 +533,7 @@ class OpsdeckApp(App):
         if not system.is_root():
             self.main.query_one("#output", RichLog).write(Text(
                 "Aviso: no eres root. Puedes consultar, pero las acciones que cambian algo fallarán. "
-                f"Abre la herramienta con: sudo {NAME}", style="yellow"))
+                f"Cierra y abre la herramienta escribiendo solo: {NAME}", style="yellow"))
         self.main.query_one("#modules", OptionList).focus()
 
     # -- módulos
@@ -595,6 +598,14 @@ class OpsdeckApp(App):
             a = self.current.action(event.option_id or "")
             if a:
                 self.start_action(self.current, a)
+
+    def action_back_to_modules(self) -> None:
+        # Esc en la pantalla principal: si el foco está en la lista de acciones, vuelve a la de módulos.
+        if not isinstance(self.screen, MainScreen) or not self.main:
+            return
+        acts = self.main.query_one("#actions", OptionList)
+        if acts.has_focus:
+            self.main.query_one("#modules", OptionList).focus()
 
     # -- acciones
 

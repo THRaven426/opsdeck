@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 
-from ..core import audit, nmapxml, results
+from ..core import audit, nmapxml, results, scope
 from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.ops import stream
 from .escaneo import escaneos
@@ -35,6 +35,8 @@ def _targets_from_scan() -> list[str]:
 
 def analizar(ctx: Context, v: dict) -> bool:
     target = (v.get("objetivo") or "").strip()
+    if target and not scope.gate(ctx, target, v, "nuclei"):
+        return False
     targets = target.split() if target else _targets_from_scan()
     if not targets:
         ctx.out.error("Indica un objetivo o haz antes un 'Escaneo de red' (se usarán sus servicios).")
@@ -99,7 +101,8 @@ A diferencia del "CVSS" del escaneo de nmap (que solo mira el número de versió
             Action("actualizar", "Actualizar plantillas", actualizar),
             Action("analizar", "Analizar", analizar, params=[
                 Param("objetivo", "Objetivo (vacío = servicios del último escaneo)", required=False),
-                Param("severidad", "Severidad", "choice", "critical,high", choices=SEVERITIES)],
+                Param("severidad", "Severidad", "choice", "critical,high", choices=SEVERITIES),
+                scope.ok_param()],
                 confirm=lambda v: f"nuclei enviará pruebas activas a {v.get('objetivo') or 'los servicios del último escaneo'}. "
                                   "¿Tienes autorización?"),
         ]

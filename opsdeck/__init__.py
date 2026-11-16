@@ -2,4 +2,4 @@
 
 # El nombre se define solo aquí (y en install.sh). Cambiarlo es cuestión de minutos.
 NAME = "opsdeck"
-VERSION = "2.0.0"
+VERSION = "2.1.0"

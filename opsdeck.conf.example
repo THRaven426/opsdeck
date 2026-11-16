@@ -28,6 +28,14 @@ edicion = ligera
 # Resultados guardados por módulo (escaneos, análisis, informes). Se borran los más antiguos. 0 = sin límite.
 # conservar_por_modulo = 50
 
+[red]
+# Barandilla de alcance. Los escaneos y pruebas se confinan a las subredes a las que este
+# equipo está conectado MÁS las redes que indiques aquí (CIDR, separadas por coma o espacio).
+# Un objetivo fuera de ese alcance se bloquea y exige autorización manual, que queda registrada.
+# redes_autorizadas = 10.20.0.0/16, 192.168.50.0/24
+# true = ignorar las subredes locales y permitir SOLO las de redes_autorizadas (más estricto).
+# solo_configuradas = false
+
 [usuarios]
 # shell = /bin/bash
 # longitud_password = 16
