@@ -8,7 +8,7 @@ Administra equipos, únelos a Active Directory, revisa su seguridad, analiza red
 y responde a incidentes, desde un menú visual en la terminal o en una línea de comando.
 
 [![Estrellas](https://img.shields.io/github/stars/THRaven426/opsdeck?style=for-the-badge&logo=github&color=f5c518)](https://github.com/THRaven426/opsdeck/stargazers)
-[![Versión](https://img.shields.io/badge/versión-2.2.0-2ea44f?style=for-the-badge)](https://github.com/THRaven426/opsdeck/commits/main)
+[![Versión](https://img.shields.io/badge/versión-2.3.0-2ea44f?style=for-the-badge)](https://github.com/THRaven426/opsdeck/commits/main)
 ![Python](https://img.shields.io/badge/python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white)
 ![Plataforma](https://img.shields.io/badge/Debian_·_Ubuntu_·_Kali-probado-a81d33?style=for-the-badge&logo=linux&logoColor=white)
 ![Ediciones](https://img.shields.io/badge/ediciones-ligera_·_completa-8250df?style=for-the-badge)
@@ -152,7 +152,7 @@ La guía completa está en [HELP.md](HELP.md) y dentro de la herramienta.
 | **Firewall** | ufw o firewalld: reglas, abrir puertos por origen, activar sin cortar SSH ni RDP |
 | **Almacenamiento** | Discos e inodos, qué ocupa más, ficheros grandes, limpieza segura |
 | **Escritorio remoto** | xrdp: quién entra, por qué alguien no puede, limitar el acceso a un grupo |
-| **Dominio (Active Directory)** | Unir el equipo al dominio y adaptarlo a cada implantación: quién entra, grupo administrador, GPO de inicio de sesión, acceso sin conexión, verificación de la configuración |
+| **Dominio (Active Directory)** | Unir el equipo al dominio y adaptarlo a cada implantación: quién entra, grupo administrador, GPO de inicio de sesión, acceso sin conexión. Una **revisión única** que vale esté el equipo unido o no (salud si lo está, preparación para unirse si no), y un **diagnóstico de contraseña caducada**. Consultar y diagnosticar, en las dos ediciones; aplicar cambios, solo en la completa. opsdeck no modifica el AD |
 | **LDAP / Active Directory** | Solo lectura: buscar usuarios, miembros anidados, exportar, revisión de seguridad del directorio |
 
 ### 🛡️ Blue team
@@ -248,6 +248,7 @@ Las pruebas crean y borran cuentas y ficheros de prueba: ejecútalas en una máq
 - [x] Barandilla de alcance de red (confinamiento a redes autorizadas, registrado)
 - [x] Recomendación del siguiente paso según los descubrimientos (con consulta de exploit público)
 - [x] Fuentes de detección al día (aviso de plantillas/exploit-db/parches desactualizados)
+- [x] Dominio: revisión única (unido o no), diagnóstico de contraseña caducada y reparto por ediciones
 - [ ] Hallazgos unificados y persistentes con estado (abierto / corregido / aceptado)
 - [ ] Flujos guiados: alta de equipo, auditoría de red, securizar un equipo
 - [ ] Informe consolidado por equipo y por red

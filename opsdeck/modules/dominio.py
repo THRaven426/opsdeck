@@ -280,6 +280,94 @@ def verificar(ctx: Context, v: dict) -> bool:
     return True
 
 
+AD_PKGS = [("sssd", "sssd"), ("realm", "realmd"), ("adcli", "adcli"), ("net", "samba-common-bin / samba-client"),
+           ("klist", "krb5-user / krb5-workstation")]
+
+
+def _fqdn_ok() -> tuple[bool, str]:
+    r = system.run(["hostname", "-f"], c_locale=True)
+    name = r.out.strip()
+    return ("." in name, name or "(sin nombre)")
+
+
+def _missing_pkgs() -> list[str]:
+    return [pkg for binname, pkg in AD_PKGS if not system.has_cmd(binname)]
+
+
+def revisar(ctx: Context, v: dict) -> bool:
+    """Revisión única: si el equipo está unido, repasa su salud; si no, mira si está listo para unirse."""
+    d = joined()
+    if d:
+        return verificar(ctx, v)
+    dom = (v.get("dominio") or "").strip().lower()
+    if not dom:
+        guess = _domain_guess()
+        dom = guess[0] if guess else ""
+    if not dom:
+        ctx.out.info("Este equipo no está unido a ningún dominio.")
+        ctx.out.info("Indica el dominio para comprobar si está listo para unirse (DNS, hora, paquetes...).")
+        return True
+    ctx.out.info(f"Este equipo no está unido. Comprobando si está listo para unirse a {dom}:")
+    ok = comprobar(ctx, {"dominio": dom})
+    faltan = _missing_pkgs()
+    fqdn_ok, fqdn = _fqdn_ok()
+    ctx.out.check(not faltan, "Herramientas de dominio instaladas" if not faltan
+                  else "Faltan herramientas de dominio: " + ", ".join(faltan) + " (instálalas desde el Catálogo)")
+    ctx.out.check(fqdn_ok, f"Nombre completo del equipo: {fqdn}" if fqdn_ok
+                  else f"El equipo no tiene nombre de dominio completo (FQDN): {fqdn}. Conviene ponerle uno (hostnamectl).")
+    return ok
+
+
+def _sshd_effective(key: str) -> str:
+    """Valor efectivo de una opción de sshd (vía 'sshd -T'); '' si no se puede determinar."""
+    r = system.run(["sshd", "-T"], c_locale=True)
+    if not r.ok:
+        return ""
+    for line in r.out.splitlines():
+        parts = line.split()
+        if parts and parts[0].lower() == key.lower():
+            return parts[1].lower() if len(parts) > 1 else ""
+    return ""
+
+
+def diagnosticar(ctx: Context, v: dict) -> bool:
+    """Por qué un usuario del dominio no puede cambiar su contraseña caducada: revisa los 3 puntos típicos."""
+    o = ctx.out
+    o.title("Diagnóstico: cambiar una contraseña caducada del dominio")
+    todo = []
+    d = joined()
+    if d:
+        sec = f"domain/{d['nombre']}"
+        chpass = sssd_get(sec, "chpass_provider", "") or sssd_get(sec, "auth_provider", "")
+        ok = chpass in ("ad", "krb5")
+        o.check(ok, f"SSSD chpass_provider = {chpass or 'no definido'} (debe ser 'ad' o 'krb5' para cambiarla contra el DC)")
+        if not ok:
+            todo.append(f"En {SSSD_CONF}, sección [{sec}], pon 'chpass_provider = ad' y reinicia sssd.")
+    else:
+        o.info("El equipo no está unido a un dominio; esto aplica a un equipo ya unido. Reviso igualmente el SSH.")
+    kbd = _sshd_effective("kbdinteractiveauthentication") or _sshd_effective("challengeresponseauthentication")
+    usepam = _sshd_effective("usepam")
+    if not kbd and not usepam:
+        o.check(False, "No se pudo leer la configuración efectiva de SSH (sshd -T). Revísala a mano.")
+        todo.append("Comprueba en sshd_config: KbdInteractiveAuthentication yes y UsePAM yes.")
+    else:
+        ssh_ok = kbd == "yes" and usepam == "yes"
+        o.check(ssh_ok, f"SSH interactivo: KbdInteractive={kbd or '?'}, UsePAM={usepam or '?'} "
+                        "(ambos 'yes' para que el usuario pueda cambiarla al entrar por SSH)")
+        if not ssh_ok:
+            todo.append("En sshd_config: 'KbdInteractiveAuthentication yes' y 'UsePAM yes'; luego reinicia ssh. "
+                        "Con solo PasswordAuthentication, al caducar la contraseña SSH corta y el usuario no puede cambiarla.")
+    o.info("Tercer punto (política del dominio): si hay 'edad mínima de contraseña', una recién cambiada no se puede "
+           "volver a cambiar hasta pasar ese plazo. Consulta la política completa del dominio en el módulo «LDAP».")
+    if todo:
+        o.title("Qué conviene hacer")
+        for t in todo:
+            o.line("  • " + t)
+    else:
+        o.ok("La parte local (SSSD y SSH) está lista para que un usuario cambie su contraseña caducada.")
+    return True
+
+
 def _sudo_file(group: str) -> Path:
     return Path(f"/etc/sudoers.d/90-opsdeck-ad-{re.sub(r'[^a-z0-9_-]+', '_', group.lower())}")
 
@@ -473,10 +561,15 @@ class Dominio(Module):
 Une este equipo Linux al dominio de Windows para que **los usuarios entren con su cuenta del
 dominio** (la misma que en Windows), sin crear usuarios locales uno a uno.
 
+> **Consultar y diagnosticar** (Estado, Revisar, Diagnosticar, Comprobar un usuario) está en las dos
+> ediciones. **Aplicar cambios** (unir, ajustes, acceso, sudo, salir) es de la edición **completa**.
+
 ## Pasos
-1. **Comprobar un dominio**: verifica que el DNS de este equipo encuentra los controladores de dominio
-   y que la hora está sincronizada (Kerberos falla con más de 5 minutos de diferencia).
-2. **Unir al dominio**: necesitas una cuenta del dominio que pueda añadir equipos. La contraseña
+1. **Revisar dominio**: una sola revisión que vale para los dos casos y no cambia nada. Si el equipo ya
+   está unido, repasa su salud (servicio, hora, claves, quién entra, sudo, acceso sin conexión) y qué
+   conviene cambiar. Si aún no lo está, comprueba si está **listo para unirse**: DNS y controladores,
+   hora sincronizada (Kerberos falla con más de 5 minutos de diferencia), herramientas instaladas y FQDN.
+2. **Unir al dominio** (completa): necesitas una cuenta del dominio que pueda añadir equipos. La contraseña
    se usa una sola vez y no se guarda. Opciones:
    - **Unidad organizativa (OU)** donde crear el equipo, p. ej. `OU=Linux,OU=Servidores,DC=empresa,DC=local`.
    - **Grupos que pueden entrar**: si no indicas ninguno, puede entrar todo el dominio.
@@ -485,8 +578,11 @@ dominio** (la misma que en Windows), sin crear usuarios locales uno a uno.
 3. **Comprobar un usuario del dominio**: confirma que el equipo "ve" a ese usuario.
 
 ## Después: dejarlo seguro según cada caso
-- **Verificar la configuración**: repasa la unión y te dice qué conviene cambiar.
-- **Ajustes de seguridad**: cada implantación es distinta.
+- **Revisar dominio**: repasa la unión y te dice qué conviene cambiar.
+- **Diagnosticar contraseña caducada**: si un usuario del dominio no puede cambiar su contraseña caducada,
+  revisa los dos puntos locales (SSSD `chpass_provider` y el SSH interactivo) y recuerda el tercero (la
+  edad mínima de contraseña de la política del dominio, que se consulta en el módulo «LDAP»).
+- **Ajustes de seguridad** (completa): cada implantación es distinta.
   - *Directivas de grupo*: si el AD ya decide por GPO quién entra en cada equipo, aplícalas;
     si no se usan, ponlas en "solo avisar" para que no bloqueen por sorpresa.
   - *Entrar sin conexión*: útil en portátiles; en servidores, mejor desactivarlo o limitar los días,
@@ -507,9 +603,16 @@ servicio **sssd** en *Servicios*.
         dom = Param("dominio", "Dominio", suggest=_domain_guess, help="Ej.: empresa.local")
         return [
             Action("estado", "Estado", estado, help="Si está unido, a qué dominio y quién puede entrar."),
-            Action("comprobar", "Comprobar un dominio", comprobar, params=[dom],
-                   help="Comprobaciones previas sin cambiar nada: DNS, controladores y hora."),
-            Action("unir", "Unir al dominio", unir, changes=True, params=[
+            Action("revisar", "Revisar dominio", revisar, params=[
+                Param("dominio", "Dominio (solo si el equipo aún NO está unido)", suggest=_domain_guess,
+                      required=False, help="Déjalo vacío si ya está unido; se detecta solo.")],
+                   help="Una sola revisión que vale para los dos casos: si el equipo está unido, repasa su salud "
+                        "y qué conviene cambiar; si no lo está, comprueba si está listo para unirse (DNS, hora, "
+                        "paquetes, FQDN). No cambia nada."),
+            Action("diagnosticar", "Diagnosticar contraseña caducada", diagnosticar,
+                   help="Por qué un usuario del dominio no puede cambiar su contraseña caducada: revisa SSSD y SSH."),
+            Action("probar", "Comprobar un usuario del dominio", probar, params=[Param("usuario", "Usuario")]),
+            Action("unir", "Unir al dominio", unir, changes=True, full=True, params=[
                 dom,
                 Param("usuario", "Cuenta del dominio con permiso para unir equipos", help="Ej.: administrador"),
                 Param("password", "Contraseña de esa cuenta", "password", help="Se usa una vez y no se guarda."),
@@ -521,10 +624,7 @@ servicio **sssd** en *Servicios*.
                 Param("cortos", "Entrar con nombre corto (sin @dominio)", "bool", True, required=False)],
                 confirm="Se unirá este equipo al dominio {dominio} con la cuenta {usuario}. ¿Continuar?",
                 help="Une el equipo al dominio y lo deja listo para que entren sus usuarios."),
-            Action("verificar", "Verificar la configuración", verificar,
-                   help="Repasa que la unión es correcta y segura (servicio, hora, claves, quién entra, sudo, "
-                        "acceso sin conexión) y te dice qué conviene cambiar."),
-            Action("ajustes", "Ajustes de seguridad", ajustes, changes=True, params=[
+            Action("ajustes", "Ajustes de seguridad", ajustes, changes=True, full=True, params=[
                 Param("gpo", "Directivas de grupo (GPO) de inicio de sesión", "choice", "enforcing", choices=GPO_MODES,
                       help="Si el AD ya controla por GPO quién inicia sesión en cada equipo, déjalo en 'Aplicarlas'."),
                 Param("offline", "Permitir entrar sin conexión con el dominio", "bool", True, required=False,
@@ -532,20 +632,19 @@ servicio **sssd** en *Servicios*.
                 Param("dias_offline", "Máximo de días sin conexión (0 = sin límite)", "int", 7, required=False),
                 Param("dns", "Registrar el equipo en el DNS del dominio", "bool", True, required=False)],
                 help="Adapta la unión a cada implantación: no todos los dominios ni todos los equipos son iguales."),
-            Action("probar", "Comprobar un usuario del dominio", probar, params=[Param("usuario", "Usuario")]),
-            Action("permitir", "Permitir acceso", permitir, changes=True, params=[
+            Action("permitir", "Permitir acceso", permitir, changes=True, full=True, params=[
                 Param("nombre", "Usuario o grupo del dominio"),
                 Param("tipo", "Es un", "choice", "grupo", choices=[("grupo", "Grupo"), ("usuario", "Usuario")])]),
-            Action("retirar", "Retirar acceso", retirar, changes=True, params=[
+            Action("retirar", "Retirar acceso", retirar, changes=True, full=True, params=[
                 Param("nombre", "Usuario o grupo del dominio"),
                 Param("tipo", "Es un", "choice", "grupo", choices=[("grupo", "Grupo"), ("usuario", "Usuario")])],
                 confirm="Se retirará el acceso a {nombre}. ¿Continuar?"),
-            Action("sudo", "Dar sudo a un grupo del dominio", sudo_grupo, changes=True,
+            Action("sudo", "Dar sudo a un grupo del dominio", sudo_grupo, changes=True, full=True,
                    params=[Param("grupo", "Grupo del dominio")],
                    confirm="Los miembros de '{grupo}' serán administradores de este equipo. ¿Continuar?"),
-            Action("sudo_quitar", "Quitar sudo a un grupo del dominio", sudo_quitar, changes=True,
+            Action("sudo_quitar", "Quitar sudo a un grupo del dominio", sudo_quitar, changes=True, full=True,
                    params=[Param("grupo", "Grupo del dominio")]),
-            Action("salir", "Salir del dominio", salir, changes=True, params=[
+            Action("salir", "Salir del dominio", salir, changes=True, full=True, params=[
                 Param("usuario", "Cuenta del dominio (opcional, para borrar el equipo del AD)", required=False),
                 Param("password", "Contraseña (si indicas cuenta)", "password", required=False)],
                 confirm="El equipo saldrá del dominio y sus usuarios no podrán entrar. ¿Continuar?"),
