@@ -76,6 +76,23 @@ def authorized_networks() -> list:
 
 # ---------------------------------------------------------------- clasificación de objetivos
 
+def host_of(spec: str) -> str:
+    """Quita esquema, ruta y puerto: «https://10.0.0.5:8443/x» → «10.0.0.5»; «[fe80::1]:443» → «fe80::1».
+    Una red CIDR o un rango estilo nmap se devuelven tal cual."""
+    spec = (spec or "").strip()
+    if "://" in spec:
+        spec = spec.split("://", 1)[1]
+        spec = spec.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+        spec = spec.rsplit("@", 1)[-1]              # usuario:clave@equipo
+    if spec.startswith("["):                        # [IPv6]:puerto
+        return spec[1:].split("]", 1)[0]
+    if spec.count(":") == 1:                        # equipo:puerto (IPv4 o nombre)
+        h, _, port = spec.partition(":")
+        if port.isdigit():
+            return h
+    return spec
+
+
 def _ip_bounds(spec: str):
     """(ip_min, ip_max) de una IP, red CIDR o rango estilo nmap. None si no es una forma numérica."""
     spec = spec.strip()
@@ -155,6 +172,7 @@ def classify(text: str, nets: Optional[list] = None) -> Result:
     nets = authorized_networks() if nets is None else nets
     res = Result()
     for spec in _specs_from_text(text):
+        spec = host_of(spec) or spec
         b = _ip_bounds(spec)
         if b is not None:
             lo, hi = b

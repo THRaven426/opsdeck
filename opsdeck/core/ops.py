@@ -27,10 +27,11 @@ def apply(ctx: Context, accion: str, objetivo: str, cmd: list[str], detalle: str
 
 def stream(ctx: Context, cmd: list[str], *, accion: str = "", objetivo: str = "", detalle: str = "",
            save_to=None, input: Optional[str] = None, env: Optional[dict] = None,
-           show: bool = True, keep: int = 0) -> tuple[int, str]:
+           show: bool = True, keep: int = 0, ok_rc: tuple[int, ...] = (0,), cwd=None) -> tuple[int, str]:
     """Ejecuta un proceso largo mostrando la salida en vivo. Si se indica 'accion' queda en la
     auditoría (también los escaneos: quién analizó qué). 'save_to' guarda la salida completa.
-    keep>0 limita las líneas que se muestran (las demás se guardan igualmente)."""
+    keep>0 limita las líneas que se muestran (las demás se guardan igualmente).
+    ok_rc: códigos de salida que cuentan como «terminó bien» en la auditoría (p. ej. 124 de timeout)."""
     lines: list[str] = []
     shown = [0]
 
@@ -40,7 +41,7 @@ def stream(ctx: Context, cmd: list[str], *, accion: str = "", objetivo: str = ""
             ctx.out.line(l)
             shown[0] += 1
 
-    rc = system.stream(cmd, on_line, env=env, input=input)
+    rc = system.stream(cmd, on_line, env=env, input=input, cwd=cwd)
     text = "\n".join(lines)
     if keep and len(lines) > keep:
         ctx.out.info(f"... {len(lines) - keep} líneas más" + (f" en {save_to}" if save_to else ""))
@@ -53,7 +54,7 @@ def stream(ctx: Context, cmd: list[str], *, accion: str = "", objetivo: str = ""
     if rc == system.STOPPED or rc == -15:
         ctx.out.warn("Detenido por el usuario.")
     if accion:
-        audit.record(accion, objetivo or "-", "OK" if rc == 0 else ("DETENIDO" if rc in (system.STOPPED, -15) else f"RC_{rc}"),
+        audit.record(accion, objetivo or "-", "OK" if rc in ok_rc else ("DETENIDO" if rc in (system.STOPPED, -15) else f"RC_{rc}"),
                      detalle)
     return rc, text
 
@@ -61,12 +62,16 @@ def stream(ctx: Context, cmd: list[str], *, accion: str = "", objetivo: str = ""
 def check_params(action: Action, values: dict) -> Optional[str]:
     for p in action.visible_params():
         v = values.get(p.name, p.default)
+        if p.kind == "choice" and p.choices and v in [c[0] for c in p.choices]:
+            continue                       # una opción de la lista es válida aunque sea "" (p. ej. «Todas»)
         if p.required and p.kind != "bool" and (v is None or str(v).strip() == ""):
             return f"Falta: {p.label}"
         if p.kind == "int" and str(v).strip() and not str(v).strip().lstrip("-").isdigit():
             return f"{p.label}: debe ser un número"
-        if p.kind == "choice" and v and p.choices and v not in [c[0] for c in p.choices]:
-            return f"{p.label}: opción no válida"
+        if p.kind == "choice" and p.choices:
+            valid = [c[0] for c in p.choices]
+            if v not in valid and not (v in ("", None) and not p.required):
+                return f"{p.label}: opción no válida"
     return None
 
 

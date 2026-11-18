@@ -9,8 +9,8 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from ..core import audit, results, system
-from ..core.catalog import Action, Context, Module, Param, cmd
+from ..core import audit, recomendacion, results, system, tooling
+from ..core.catalog import Action, Context, Module, Param, any_cmd, cmd
 from ..core.ops import stream
 
 FLOW = re.compile(r"^\S+ IP6? (\S+?)\.(\d+) > (\S+?)\.(\d+): (\w+)")
@@ -111,13 +111,25 @@ def _iface(ctx, v) -> str:
     return i
 
 
-def _capture(ctx, iface: str, secs: int, flt: str, pcap: Path, label: str) -> bool:
-    args = ["timeout", "--signal=INT", str(secs), "tcpdump", "-i", iface, "-nn", "-U", "-w", str(pcap), "-c", "500000"]
+def _capture(ctx, iface: str, secs: int, flt: str, pcap: Path, label: str, v: dict | None = None) -> bool:
+    v = v or {}
+    args = ["timeout", "--signal=INT", str(secs), "tcpdump", "-i", iface, "-nn", "-U", "-w", str(pcap),
+            "-c", str(tooling.int_in(v.get("max_paquetes"), 500000, 100, 50_000_000))]
+    if v.get("snaplen"):
+        args += ["-s", str(tooling.int_in(v["snaplen"], 262144, 64, 262144))]
+    if v.get("sin_promiscuo"):
+        args.append("-p")
+    if v.get("rotar_mb"):
+        args += ["-C", str(tooling.int_in(v["rotar_mb"], 100, 1, 10000)), "-W", str(tooling.int_in(v.get("rotar_n"), 5, 1, 100))]
     if flt:
         args.append(flt)
     ctx.out.info(f"Capturando en {iface} durante {secs} s (s = detener)...")
     rc, _ = stream(ctx, args, accion=f"trafico_{label}", objetivo=iface, detalle=f"segundos={secs} filtro={flt or '-'}",
-                   keep=6)
+                   keep=6, ok_rc=(0, 124))
+    if v.get("rotar_mb") and not pcap.exists():
+        parts = sorted(pcap.parent.glob(pcap.name + "*"))
+        if parts:
+            parts[0].rename(pcap)
     if not pcap.exists() or pcap.stat().st_size <= 24:
         ctx.out.warn("No se capturó ningún paquete (revisa la interfaz y el filtro).")
         return False
@@ -133,10 +145,10 @@ def capturar(ctx: Context, v: dict) -> bool:
     if not FILTER_RE.match(flt):
         ctx.out.error("Filtro con caracteres no permitidos. Ej.: host 192.168.0.10 and port 443")
         return False
-    secs = max(5, min(int(v.get("segundos") or 60), 3600))
+    secs = tooling.int_in(v.get("segundos"), 60, 5, 86400)
     d = results.new_dir("trafico", f"captura_{iface}")
     pcap = d / "captura.pcap"
-    if not _capture(ctx, iface, secs, flt, pcap, "capturar"):
+    if not _capture(ctx, iface, secs, flt, pcap, "capturar", v):
         return False
     report = show(ctx, read_pcap(pcap))
     results.write(d / "hallazgos.txt", "\n".join(report) + "\n")
@@ -157,6 +169,11 @@ def analizar(ctx: Context, v: dict) -> bool:
     if not pcap.is_file():
         ctx.out.error(f"No existe {pcap}")
         return False
+    head = pcap.read_bytes()[:4]
+    if head not in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4", b"\x4d\x3c\xb2\xa1", b"\xa1\xb2\x3c\x4d",
+                    b"\x0a\x0d\x0d\x0a"):
+        ctx.out.error(f"{pcap} no parece una captura (.pcap/.pcapng)")
+        return False
     ctx.out.info(f"Analizando {pcap}...")
     show(ctx, read_pcap(pcap))
     audit.record("trafico_analizar", str(pcap), "OK")
@@ -167,10 +184,11 @@ def pasivo(ctx: Context, v: dict) -> bool:
     iface = _iface(ctx, v)
     if not iface:
         return False
-    secs = max(10, min(int(v.get("segundos") or 120), 3600))
+    secs = tooling.int_in(v.get("segundos"), 120, 10, 86400)
     d = results.new_dir("trafico", f"pasivo_{iface}")
     pcap = d / "pasivo.pcap"
-    if not _capture(ctx, iface, secs, "arp or broadcast or multicast", pcap, "pasivo"):
+    if not _capture(ctx, iface, secs, "arp or broadcast or multicast or udp port 5355 or udp port 137 or udp port 5353",
+                    pcap, "pasivo", v):
         return False
     arp = system.run(["tcpdump", "-nn", "-e", "-r", str(pcap), "arp"], c_locale=True).out.splitlines()
     macs = summarize([], [], arp)["macs"]
@@ -181,7 +199,82 @@ def pasivo(ctx: Context, v: dict) -> bool:
     results.write(d / "hosts_vistos.txt", "\n".join(r[0] for r in rows) + "\n")
     ctx.out.info(f"Lista en {d / 'hosts_vistos.txt'} (sirve como objetivo de un escaneo). "
                  "Cuanto más tiempo escuches, más equipos aparecerán.")
+    names = name_protocols(pcap)
+    findings = []
+    if names:
+        ctx.out.title("Resolución de nombres por difusión (LLMNR / NBT-NS / mDNS)")
+        ctx.out.table(["Protocolo", "Equipos que preguntan", "Ejemplos de nombres"],
+                      [[proto, ", ".join(sorted(info["origen"])[:6]) + (" ..." if len(info["origen"]) > 6 else ""),
+                        ", ".join(sorted(info["nombres"])[:4])] for proto, info in names.items()])
+        for proto, info in names.items():
+            if proto in ("LLMNR", "NBT-NS"):
+                findings.append(recomendacion.Finding(", ".join(sorted(info["origen"])[:5]), "MEDIO",
+                                                      f"{proto} en uso por {len(info['origen'])} equipos: un atacante en la "
+                                                      "red puede responder y capturar hashes NTLM", "difusion"))
+            else:
+                findings.append(recomendacion.Finding(", ".join(sorted(info["origen"])[:5]), "BAJO",
+                                                      f"mDNS en uso por {len(info['origen'])} equipos", "difusion"))
+        recomendacion.render(ctx, findings)
     return True
+
+
+NAME_PORTS = {5355: "LLMNR", 137: "NBT-NS", 5353: "mDNS"}
+
+
+def name_protocols(pcap: Path) -> dict:
+    """Quién usa LLMNR, NBT-NS y mDNS (protocolos que facilitan la suplantación de nombres)."""
+    out: dict = {}
+    r = system.run(["tcpdump", "-nn", "-r", str(pcap), "udp port 5355 or udp port 137 or udp port 5353"],
+                   c_locale=True, timeout=300)
+    for line in r.out.splitlines():
+        m = FLOW.match(line)
+        if not m:
+            continue
+        src, sp, dport = m.group(1), int(m.group(2)), int(m.group(4))
+        proto = NAME_PORTS.get(dport) or NAME_PORTS.get(sp)
+        if not proto or sp in (5355, 5353) and dport not in (5355, 5353):
+            continue
+        info = out.setdefault(proto, {"origen": set(), "nombres": set()})
+        info["origen"].add(src)
+        q = re.search(r"\s(?:A|AAAA|ANY|PTR|NB)\?\s+(\S+?)\.?(?:\s|\(|$)", line)
+        if q:
+            info["nombres"].add(q.group(1)[:40])
+    return out
+
+
+def responder(ctx: Context, v: dict) -> bool:
+    """Responder en modo análisis (-A): escucha LLMNR/NBT-NS/mDNS y dice qué se podría envenenar. No responde."""
+    iface = _iface(ctx, v)
+    if not iface or iface == "any":
+        if iface == "any":
+            ctx.out.error("Responder necesita una interfaz concreta")
+        return False
+    secs = tooling.int_in(v.get("segundos"), 300, 30, 86400)
+    d = results.new_dir("trafico", f"responder_{iface}")
+    exe = "responder" if system.has_cmd("responder") else "Responder.py"
+    args = ["timeout", "--signal=INT", str(secs), exe, "-I", iface, "-A"]
+    ctx.out.info(f"Responder en MODO ANÁLISIS durante {secs} s: solo escucha, no envenena ni responde. s = detener")
+    rc, out = stream(ctx, args, accion="responder_analisis", objetivo=iface, save_to=d / "responder.txt", keep=200,
+                     ok_rc=(0, 124))
+    seen = sorted(set(re.findall(r"\[Analyze mode: (\S+)\] Request by (\S+) for (\S+)", out)))
+    if seen:
+        ctx.out.table(["Protocolo", "Equipo", "Nombre pedido"], [list(x) for x in seen[:60]])
+        recomendacion.render(ctx, [recomendacion.Finding(", ".join(sorted({x[1] for x in seen})[:5]), "MEDIO",
+                                                         f"{len({x[1] for x in seen})} equipos resuelven nombres por "
+                                                         "difusión (se podrían capturar sus hashes NTLM)", "difusion")])
+    else:
+        ctx.out.ok("Ninguna petición LLMNR/NBT-NS/mDNS vista en ese tiempo.")
+    return rc in (0, 124)
+
+
+def _adv() -> list[Param]:
+    A = dict(required=False, advanced=True)
+    return [Param("max_paquetes", "Máximo de paquetes", "int", 500000, **A),
+            Param("snaplen", "Bytes por paquete (snaplen; vacío = completo)", "int", "", **A,
+                  help="Ej.: 128 para guardar solo cabeceras (menos espacio y menos datos personales)"),
+            Param("sin_promiscuo", "Sin modo promiscuo (solo tráfico de este equipo)", "bool", False, **A),
+            Param("rotar_mb", "Partir la captura cada N MB (vacío = un fichero)", "int", "", **A),
+            Param("rotar_n", "Cuántos ficheros conservar al partir", "int", 5, **A)]
 
 
 class Trafico(Module):
@@ -192,6 +285,7 @@ class Trafico(Module):
     summary = "Capturar y analizar tráfico; descubrir equipos de forma pasiva"
     requires = [cmd("tcpdump", debian="tcpdump", rhel="tcpdump", suse="tcpdump", arch="tcpdump"),
                 cmd("ip", debian="iproute2", rhel="iproute", suse="iproute2", arch="iproute2")]
+    optional = [any_cmd(["responder", "Responder.py"], label="responder")]
     help = """\
 # Tráfico de red
 
@@ -207,7 +301,14 @@ Análisis **pasivo**: no envía nada a la red, solo escucha.
   - nombres DNS anormalmente largos (posible túnel DNS).
 - **Analizar una captura**: lo mismo sobre un `.pcap` existente (propio o recibido de otro equipo).
 - **Descubrimiento pasivo**: lista los equipos de la red escuchando ARP y difusión, sin escanear.
-  Útil cuando no quieres hacer ruido o hay equipos frágiles (industriales, médicos).
+  Útil cuando no quieres hacer ruido o hay equipos frágiles (industriales, médicos). Además indica
+  qué equipos usan **LLMNR, NBT-NS o mDNS** (resolución de nombres por difusión: la puerta a capturar
+  hashes NTLM suplantando nombres).
+- **Responder en modo análisis**: si Responder está instalado, escucha esas peticiones con su
+  motor y dice qué se podría envenenar, **sin responder a nada** (`-A`).
+
+**Opciones avanzadas** de las capturas: máximo de paquetes, bytes por paquete (solo cabeceras),
+sin modo promiscuo y partir la captura en ficheros de N MB.
 
 El resumen usa solo metadatos: no muestra el contenido de los paquetes. La captura completa queda
 guardada (solo root) para abrirla con Wireshark.
@@ -225,9 +326,13 @@ puerto espejo (SPAN) o en el propio servidor o firewall.
         return [
             Action("capturar", "Capturar y resumir", capturar, params=[
                 iface, Param("segundos", "Duración (segundos)", "int", 60),
-                Param("filtro", "Filtro (opcional)", required=False, help="Ej.: host 192.168.0.10 and port 443")]),
+                Param("filtro", "Filtro (opcional)", required=False, help="Ej.: host 192.168.0.10 and port 443"),
+                *_adv()]),
             Action("analizar", "Analizar una captura", analizar, params=[
                 Param("fichero", "Fichero .pcap (vacío = última captura)", required=False)]),
             Action("pasivo", "Descubrimiento pasivo", pasivo, params=[
-                iface, Param("segundos", "Tiempo de escucha (segundos)", "int", 120)]),
+                iface, Param("segundos", "Tiempo de escucha (segundos)", "int", 120), *_adv()[:3]]),
+            Action("responder", "Responder en modo análisis (solo escucha)", responder,
+                   requires=[any_cmd(["responder", "Responder.py"])], params=[
+                       iface, Param("segundos", "Tiempo de escucha (segundos)", "int", 300)]),
         ]

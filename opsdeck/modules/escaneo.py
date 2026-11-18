@@ -8,10 +8,11 @@ from __future__ import annotations
 import re
 import shlex
 from pathlib import Path
+from typing import Optional
 
 import ipaddress
 
-from ..core import audit, config, edition, feeds, nmapxml, recomendacion, results, scope, system
+from ..core import audit, config, edition, feeds, nmapxml, recomendacion, results, scope, system, tooling
 from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.ops import stream
 
@@ -27,9 +28,23 @@ PROFILES = {
     "udp": ("UDP: 100 puertos más comunes", ["-sU", "-sV", "--version-intensity", "0", "-T4", "--top-ports", "100", "--open"]),
     "sigiloso": ("Sigiloso: lento y fragmentado (evasión de IDS)",
                  ["-sS", "-Pn", "-n", "-T2", "--top-ports", "100", "-f", "--randomize-hosts", "--max-retries", "1"]),
+    "scripts": ("Scripts seguros: 1000 puertos + versiones + scripts por defecto (-sC)",
+                ["-sS", "-sV", "-sC", "-T4", "--top-ports", "1000", "--open"]),
+    "infraestructura": ("Infraestructura: puertos de gestión y servicios de red habituales en auditorías",
+                        ["-sS", "-sU", "-sV", "-T4", "--open", "-p", "T:21-23,25,53,80,88,110,111,135,139,143,389,443,"
+                         "445,465,587,623,636,873,993,995,1433,1521,2049,2375,2376,3000,3260,3268,3269,3306,3389,"
+                         "5432,5900,5985,5986,6379,8000,8006,8080,8443,9000,9090,9200,9392,9443,10000,11211,27017,"
+                         "U:53,69,123,161,500,623,1900,5353"]),
 }
 LIGHT_PROFILES = ("rapido", "estandar")
-FORBIDDEN = ("-o", "-iL", "--script-updatedb", "--datadir", "--resume", "--stylesheet")
+FORBIDDEN = ("-o", "-iL", "-iR", "--script-updatedb", "--datadir", "--resume", "--stylesheet")
+TIMINGS = [("", "La del perfil"), ("T0", "T0 paranoico (IDS)"), ("T1", "T1 sigiloso"), ("T2", "T2 educado"),
+           ("T3", "T3 normal"), ("T4", "T4 agresivo (red buena)"), ("T5", "T5 loco (puede perder puertos)")]
+PORTS_RE = re.compile(r"^[TUSU:0-9,\-]+$")
+SCRIPT_RE = re.compile(r"^[A-Za-z0-9_,.()* -]+$")
+DISCOVERY = [("completo", "ICMP + TCP + UDP (recomendado)"), ("arp", "Solo ARP (red local, el más fiable)"),
+             ("icmp", "Solo ICMP (eco y marca de tiempo)"), ("tcp", "Solo TCP (cuando se filtra el ping)"),
+             ("lista", "Sin enviar nada: solo resolver la lista (-sL)")]
 
 
 def _targets(ctx, text: str) -> list[str]:
@@ -54,10 +69,109 @@ def _exclude(text: str) -> list[str]:
 def _run(ctx, label: str, args: list[str], targets: list[str], exclude: str, d: Path, name: str) -> tuple[int, Path]:
     out = d / name
     cmd_line = ["nmap", *args, *_exclude(exclude), "-oA", str(out), "--stats-every", "30s", *targets]
+    results.write(d / "orden.txt", " ".join(shlex.quote(a) for a in cmd_line) + "\n")
     ctx.out.info("$ " + " ".join(shlex.quote(a) for a in cmd_line))
     rc, _ = stream(ctx, cmd_line, accion=f"nmap_{label}", objetivo=" ".join(targets), detalle=" ".join(args),
                    keep=60)
     return rc, out.with_suffix(".xml")
+
+
+def _set_flag(args: list[str], prefix: str, new: list[str]) -> list[str]:
+    """Sustituye una opción del perfil (p. ej. -T4 por -T2) o la añade."""
+    out, skip = [], False
+    for i, a in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if a.startswith(prefix):
+            if prefix in ("--top-ports", "-p", "--max-retries", "--min-rate", "--host-timeout",
+                          "--version-intensity", "--script", "--script-args") and a == prefix:
+                skip = True
+            continue
+        out.append(a)
+    return out + new
+
+
+def advanced(ctx: Context, v: dict, base: list[str]) -> Optional[list[str]]:
+    """Aplica las opciones avanzadas sobre los argumentos de un perfil. None si hay un error."""
+    args = list(base)
+    ports = (v.get("puertos") or "").replace(" ", "")
+    if ports:
+        if not PORTS_RE.match(ports):
+            ctx.out.error("Puertos no válidos. Ej.: 22,80,443  1-1024  T:80,U:161  o «-» para todos")
+            return None
+        args = _set_flag(_set_flag(args, "--top-ports", []), "-F", [])
+        args = _set_flag(args, "-p", ["-p-"] if ports in ("-", "todos", "all") else ["-p", ports])
+    if v.get("tiempo"):
+        args = [a for a in args if not re.match(r"^-T[0-5]$", a)] + [f"-{v['tiempo']}"]
+    if v.get("sin_ping") and "-Pn" not in args:
+        args.append("-Pn")
+    if v.get("sin_dns") and "-n" not in args:
+        args.append("-n")
+    if v.get("so") and "-O" not in args:
+        args += ["-O", "--osscan-limit"]
+    if v.get("ipv6") and "-6" not in args:
+        args.append("-6")
+    if v.get("versiones_todas") and "-sV" in args:
+        args = _set_flag(args, "--version-intensity", ["--version-all"])
+    if v.get("todos_los_estados"):
+        args = [a for a in args if a != "--open"]
+    scripts = (v.get("scripts") or "").strip()
+    if scripts:
+        if not SCRIPT_RE.match(scripts):
+            ctx.out.error("Scripts NSE no válidos. Ej.: ssl-enum-ciphers,ssh2-enum-algos  o  \"default and safe\"")
+            return None
+        if "--script" in args:
+            i = args.index("--script")
+            args[i + 1] = f"({args[i + 1]}) or ({scripts})"
+        else:
+            args += ["--script", scripts]
+    sargs = (v.get("script_args") or "").strip()
+    if sargs:
+        args += ["--script-args", sargs]
+    for key, flag, lo, hi in (("min_rate", "--min-rate", 1, 100000), ("reintentos", "--max-retries", 0, 10)):
+        if str(v.get(key) or "").strip():
+            args = _set_flag(args, flag, [flag, str(tooling.int_in(v[key], 0, lo, hi))])
+    ht = (v.get("tiempo_equipo") or "").strip()
+    if ht:
+        if not re.match(r"^\d+[smh]?$", ht):
+            ctx.out.error("Tiempo máximo por equipo no válido. Ej.: 30m, 900s, 1h")
+            return None
+        args = _set_flag(args, "--host-timeout", ["--host-timeout", ht])
+    iface = (v.get("interfaz") or "").strip()
+    if iface:
+        if not re.match(r"^[A-Za-z0-9_.:-]{1,20}$", iface):
+            ctx.out.error("Interfaz no válida")
+            return None
+        args += ["-e", iface]
+    extra, err = tooling.extra_args(v.get("extra", ""), FORBIDDEN)
+    if err:
+        ctx.out.error(err)
+        return None
+    return args + extra
+
+
+def advanced_params() -> list[Param]:
+    A = dict(required=False, advanced=True)
+    return [
+        Param("puertos", "Puertos (sustituye a los del perfil)", **A,
+              help="Ej.: 22,80,443 · 1-1024 · T:80,443,U:161 · «-» = los 65535"),
+        Param("tiempo", "Velocidad (plantilla de tiempo)", "choice", "", choices=TIMINGS, **A),
+        Param("sin_ping", "No hacer ping previo (-Pn): trata a todos como encendidos", "bool", False, **A),
+        Param("sin_dns", "No resolver nombres (-n), más rápido", "bool", False, **A),
+        Param("so", "Detectar el sistema operativo (-O)", "bool", False, **A),
+        Param("versiones_todas", "Detección de versiones exhaustiva (--version-all)", "bool", False, **A),
+        Param("todos_los_estados", "Mostrar también puertos filtrados/cerrados", "bool", False, **A),
+        Param("scripts", "Scripts NSE adicionales", **A,
+              help="Ej.: ssl-enum-ciphers,ssh2-enum-algos,rdp-enum-encryption · o una expresión: \"safe and discovery\""),
+        Param("script_args", "Argumentos de los scripts (--script-args)", **A, help="Ej.: http.useragent=Mozilla/5.0"),
+        Param("min_rate", "Paquetes por segundo mínimos (--min-rate)", "int", "", **A),
+        Param("reintentos", "Reintentos máximos por puerto (--max-retries)", "int", "", **A),
+        Param("tiempo_equipo", "Tiempo máximo por equipo (--host-timeout)", **A, help="Ej.: 30m"),
+        Param("interfaz", "Interfaz de red (-e)", **A),
+        Param("ipv6", "Objetivos IPv6 (-6)", "bool", False, **A),
+        tooling.p_extra("nmap", "--reason --data-length 25"),
+    ]
 
 
 def summary(ctx: Context, scan: nmapxml.Scan, maxp: int = 12) -> None:
@@ -101,8 +215,21 @@ def descubrir(ctx: Context, v: dict) -> bool:
     if not t:
         return False
     d = results.new_dir("escaneo", f"descubrimiento_{v['objetivo']}")
-    rc, xml = _run(ctx, "descubrimiento", ["-sn", "-PE", "-PP", "-PS21,22,80,443,445,3389,8080", "-PA80,443",
-                                           "-PU53,161"], t, v.get("excluir", ""), d, "descubrimiento")
+    probes = {"completo": ["-sn", "-PE", "-PP", "-PS21,22,80,443,445,3389,8080", "-PA80,443", "-PU53,161"],
+              "arp": ["-sn", "-PR"], "icmp": ["-sn", "-PE", "-PP", "--disable-arp-ping"],
+              "tcp": ["-sn", "-PS21,22,25,80,135,139,443,445,3389,5985,8080,8443", "-PA80,443", "--disable-arp-ping"],
+              "lista": ["-sL"]}
+    base = probes.get(v.get("metodo") or "completo", probes["completo"])
+    args = list(base)
+    if v.get("sin_dns"):
+        args.append("-n")
+    if v.get("tiempo"):
+        args.append(f"-{v['tiempo']}")
+    extra, err = tooling.extra_args(v.get("extra", ""), FORBIDDEN)
+    if err:
+        ctx.out.error(err)
+        return False
+    rc, xml = _run(ctx, "descubrimiento", args + extra, t, v.get("excluir", ""), d, "descubrimiento")
     scan = nmapxml.parse(xml)
     up = scan.up()
     results.write(d / "hosts_activos.txt", "\n".join(h.ip for h in up) + "\n")
@@ -125,9 +252,15 @@ def escanear(ctx: Context, v: dict) -> bool:
     if prof == "vulnerabilidades":
         feeds.warn_if_stale(ctx)
     d = results.new_dir("escaneo", f"{prof}_{v['objetivo'].replace('/', '_')}")
+    if prof != "completo" and advanced(ctx, v, PROFILES[prof][1]) is None:
+        return False
     if prof == "completo":
-        rc, xml = _run(ctx, "completo_puertos", ["-sS", "-p-", "-T4", "--min-rate", "1000", "--open", "-n"], t,
-                       v.get("excluir", ""), d, "1_puertos")
+        phase1 = advanced(ctx, {k: v.get(k) for k in ("tiempo", "sin_ping", "min_rate", "reintentos", "tiempo_equipo",
+                                                      "interfaz", "ipv6", "puertos")},
+                          ["-sS", "-p-", "-T4", "--min-rate", "1000", "--open", "-n"])
+        if phase1 is None:
+            return False
+        rc, xml = _run(ctx, "completo_puertos", phase1, t, v.get("excluir", ""), d, "1_puertos")
         first = nmapxml.parse(xml)
         ports = sorted({p.port for h in first.up() for p in h.open_ports()})
         hosts = [h.ip for h in first.up() if h.open_ports()]
@@ -137,10 +270,10 @@ def escanear(ctx: Context, v: dict) -> bool:
             summary(ctx, first)
             return rc == 0
         ctx.out.info(f"Puertos abiertos: {','.join(map(str, ports))}. Analizando servicios en {len(hosts)} equipos...")
-        rc, xml = _run(ctx, "completo_servicios", ["-sS", "-sV", "-sC", "-O", "-T4", "-p", ",".join(map(str, ports))],
-                       hosts, "", d, "2_servicios")
+        phase2 = advanced(ctx, {**v, "puertos": ""}, ["-sS", "-sV", "-sC", "-O", "-T4", "-p", ",".join(map(str, ports))])
+        rc, xml = _run(ctx, "completo_servicios", phase2 or [], hosts, "", d, "2_servicios")
     else:
-        rc, xml = _run(ctx, prof, PROFILES[prof][1], t, v.get("excluir", ""), d, prof)
+        rc, xml = _run(ctx, prof, advanced(ctx, v, PROFILES[prof][1]) or [], t, v.get("excluir", ""), d, prof)
     summary(ctx, nmapxml.parse(xml))
     ctx.out.info(f"Resultados completos en {d}")
     return rc == 0
@@ -152,14 +285,12 @@ def personalizado(ctx: Context, v: dict) -> bool:
     t = _targets(ctx, v["objetivo"])
     if not t:
         return False
-    try:
-        flags = shlex.split(v["opciones"])
-    except ValueError as e:
-        ctx.out.error(f"Opciones mal escritas: {e}")
+    flags, err = tooling.extra_args(v["opciones"], FORBIDDEN)
+    if err:
+        ctx.out.error(err)
         return False
-    bad = [f for f in flags if f.startswith(FORBIDDEN)]
-    if bad:
-        ctx.out.error(f"No se permiten estas opciones (la herramienta gestiona la salida): {' '.join(bad)}")
+    if not flags:
+        ctx.out.error("Indica las opciones de nmap")
         return False
     d = results.new_dir("escaneo", f"personalizado_{v['objetivo'].replace('/', '_')}")
     rc, xml = _run(ctx, "personalizado", flags, t, v.get("excluir", ""), d, "personalizado")
@@ -167,13 +298,29 @@ def personalizado(ctx: Context, v: dict) -> bool:
     return rc == 0
 
 
-def escaneos() -> list[Path]:
+def escaneos(con_puertos: bool = True) -> list[Path]:
+    """XML de los escaneos guardados, el más reciente primero. Por defecto solo los que miran puertos:
+    un «Descubrir equipos» no tiene servicios y no sirve de base a nuclei, web, TLS..."""
     out = []
     for s in results.sessions("escaneo", 50):
         xmls = sorted(s.glob("*.xml"))
-        if xmls:
-            out.append(xmls[-1])
+        if not xmls:
+            continue
+        if con_puertos and xmls[-1].name.startswith("descubrimiento"):
+            continue
+        out.append(xmls[-1])
     return out
+
+
+def ultimo(ctx: Context) -> Optional[nmapxml.Scan]:
+    """El último escaneo con puertos, avisando de cuál se usa. None (con mensaje) si no hay."""
+    scans = escaneos()
+    if not scans:
+        ctx.out.error("No hay escaneos de puertos guardados: haz antes un «Escaneo de red › Escanear» "
+                      "(perfil estándar o superior). Un «Descubrir equipos» no sirve: no mira puertos.")
+        return None
+    ctx.out.info(f"Usando el escaneo {_label(scans[0])}")
+    return nmapxml.parse(scans[0])
 
 
 def _label(p: Path) -> str:
@@ -182,7 +329,7 @@ def _label(p: Path) -> str:
 
 
 def ver(ctx: Context, v: dict) -> bool:
-    scans = escaneos()
+    scans = escaneos(con_puertos=False)
     if not scans:
         ctx.out.info("Todavía no hay escaneos guardados.")
         return True
@@ -202,7 +349,7 @@ def ver(ctx: Context, v: dict) -> bool:
 
 
 def comparar(ctx: Context, v: dict) -> bool:
-    scans = escaneos()
+    scans = escaneos(con_puertos=False)
     try:
         a, b = int(v.get("anterior") or 2), int(v.get("reciente") or 1)
         old, new = scans[a - 1], scans[b - 1]
@@ -210,7 +357,13 @@ def comparar(ctx: Context, v: dict) -> bool:
         ctx.out.error("Hacen falta dos escaneos guardados (míralos en 'Ver escaneos guardados').")
         return False
     ctx.out.info(f"Antes:   {_label(old)}\nDespués: {_label(new)}")
+    disc = [p.name.startswith("descubrimiento") for p in (old, new)]
+    if disc[0] != disc[1]:
+        ctx.out.warn("Comparas un «Descubrir equipos» (sin puertos) con un escaneo de puertos: solo tiene "
+                     "sentido la parte de equipos nuevos/desaparecidos.")
     c = nmapxml.diff(nmapxml.parse(old), nmapxml.parse(new))
+    if disc[0] != disc[1]:
+        c["puertos_abiertos"], c["puertos_cerrados"], c["versiones"] = [], [], []
     nothing = True
     for key, title in (("hosts_nuevos", "Equipos nuevos"), ("hosts_desaparecidos", "Equipos que ya no responden")):
         if c[key]:
@@ -326,6 +479,13 @@ no un muro frente a quien tenga root.
 | Vulnerabilidades | Scripts NSE de vulnerabilidades y CVE conocidos (intrusivo, pide confirmación) |
 | UDP | DNS, SNMP, NTP... (lento por naturaleza) |
 | Sigiloso | Lento y fragmentado, para probar si un IDS lo detecta |
+| Scripts seguros | Como estándar, más los scripts NSE por defecto (`-sC`): títulos web, certificados, SMB... |
+| Infraestructura | Puertos de gestión y servicios que suelen salir en las auditorías (RDP, iSCSI, SNMP, IPMI, NFS, bases de datos, Docker, Redis...), TCP y UDP |
+
+**Opciones avanzadas** (casilla «Mostrar opciones avanzadas» del formulario, o `--opcion` en la línea
+de comandos): puertos concretos, velocidad (T0–T5), sin ping (`-Pn`), sin DNS, detección de sistema
+operativo, scripts NSE adicionales y sus argumentos, paquetes por segundo, reintentos, tiempo máximo
+por equipo, interfaz, IPv6 y opciones libres de nmap. Sin tocarlas, cada perfil usa sus valores.
 
 3. **Ver escaneos guardados**: resumen compacto, una línea por equipo.
 4. **Comparar escaneos**: equipos y puertos nuevos o desaparecidos y cambios de versión.
@@ -342,13 +502,20 @@ Debian/Ubuntu suele exagerar (no ve los parches aplicados).
         obj = Param("objetivo", "Objetivo", suggest=_subnets,
                     help="IP, red (192.168.0.0/24), rango, varios separados por espacio o ruta a un fichero")
         exc = Param("excluir", "Excluir (opcional, separados por coma)", required=False)
+        A = dict(required=False, advanced=True)
         return [
-            Action("descubrir", "Descubrir equipos", descubrir, params=[obj, exc, scope.ok_param()],
-                   help="Quién está encendido en la red, sin escanear puertos."),
+            Action("descubrir", "Descubrir equipos", descubrir, params=[
+                obj, exc, scope.ok_param(),
+                Param("metodo", "Método de descubrimiento", "choice", "completo", choices=DISCOVERY, **A),
+                Param("tiempo", "Velocidad (plantilla de tiempo)", "choice", "", choices=TIMINGS, **A),
+                Param("sin_dns", "No resolver nombres (-n)", "bool", False, **A),
+                tooling.p_extra("nmap", "--source-port 53")],
+                help="Quién está encendido en la red, sin escanear puertos."),
             Action("escanear", "Escanear", escanear, params=[
                 obj, Param("perfil", "Perfil", "choice", "estandar",
                            choices=[(k, v[0]) for k, v in PROFILES.items()
-                                    if k in LIGHT_PROFILES or edition.allowed_full()[0]]), exc, scope.ok_param()],
+                                    if k in LIGHT_PROFILES or edition.allowed_full()[0]]), exc, scope.ok_param(),
+                *advanced_params()],
                 confirm=_confirm, help="Escaneo con un perfil predefinido; guarda los resultados y muestra el resumen."),
             Action("personalizado", "Escaneo personalizado", personalizado, full=True, params=[
                 obj, Param("opciones", "Opciones de nmap", help="Ej.: -sS -p 22,80,443 -sV --script ssl-enum-ciphers"),

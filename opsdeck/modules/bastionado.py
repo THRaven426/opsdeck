@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from ..core import audit, results, system
@@ -36,6 +37,22 @@ def auditar(ctx: Context, v: dict) -> bool:
     args = ["lynis", "audit", "system", "--quick", "--no-colors", "--report-file", str(report), "--log-file", str(log)]
     if v.get("grupo"):
         args += ["--tests-from-group", v["grupo"]]
+    tests = (v.get("pruebas") or "").replace(" ", "")
+    if tests:
+        if not re.match(r"^[A-Z]{3,5}-\d{4}(,[A-Z]{3,5}-\d{4})*$", tests):
+            ctx.out.error("IDs de prueba no válidos. Ej.: SSH-7408,AUTH-9286")
+            return False
+        args += ["--tests", tests.replace(",", " ")]
+    if v.get("pentest"):
+        args.append("--pentest")
+    if not v.get("rapido", True):
+        args.remove("--quick")
+    perfil = (v.get("perfil") or "").strip()
+    if perfil:
+        if not Path(perfil).is_file():
+            ctx.out.error(f"No existe el perfil {perfil}")
+            return False
+        args += ["--profile", perfil]
     ctx.out.info("Auditando el sistema con Lynis (unos minutos)...")
     rc, _ = stream(ctx, args, accion="lynis_auditoria", objetivo=system.hostname(), save_to=d / "salida.txt", keep=40)
     data = parse_report(report)
@@ -97,13 +114,24 @@ Una instalación recién hecha suele rondar 55-65; un servidor bien configurado,
   **avisos** (lo importante) y después las **sugerencias**.
 - **Historial**: el índice de cada auditoría, para ver si mejora tras aplicar cambios.
 
+**Opciones avanzadas**: solo unas pruebas concretas por ID, modo sin privilegios (`--pentest`) y un
+perfil propio (`.prf`) para adaptar Lynis a la política de la organización.
+
 Flujo recomendado: auditar → corregir los avisos → volver a auditar y comparar.
 Para una revisión rápida sin instalar nada usa *Revisión de seguridad*.
 """
 
     def actions(self):
         return [
-            Action("auditar", "Auditar", auditar, params=[Param("grupo", "Alcance", "choice", "", choices=GROUPS)],
+            Action("auditar", "Auditar", auditar, params=[
+                Param("grupo", "Alcance", "choice", "", choices=GROUPS, required=False),
+                Param("pruebas", "Solo estas pruebas (IDs de Lynis)", required=False, advanced=True,
+                      help="Ej.: SSH-7408,AUTH-9286 (lynis show tests para verlas)"),
+                Param("pentest", "Modo sin privilegios (--pentest), como lo vería un usuario normal", "bool", False,
+                      required=False, advanced=True),
+                Param("rapido", "Sin pausas entre secciones (--quick)", "bool", True, required=False, advanced=True),
+                Param("perfil", "Perfil de Lynis personalizado (.prf)", required=False, advanced=True,
+                      help="Para ajustar o saltar pruebas según la política de tu organización")],
                    help="Ejecuta Lynis, guarda el informe y lo compara con la auditoría anterior."),
             Action("historial", "Historial del índice", historial),
         ]

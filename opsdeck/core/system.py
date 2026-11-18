@@ -53,7 +53,7 @@ STOPPED = 143
 
 
 def stream(cmd: list[str], on_line: Callable[[str], None], *, env: Optional[dict] = None,
-           input: Optional[str] = None) -> int:
+           input: Optional[str] = None, cwd=None) -> int:
     """Ejecuta mostrando la salida línea a línea. Se puede detener con stop_current()."""
     global _CURRENT
     e = dict(os.environ)
@@ -62,7 +62,7 @@ def stream(cmd: list[str], on_line: Callable[[str], None], *, env: Optional[dict
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
-                             text=True, env=e, bufsize=1, errors="replace", start_new_session=True)
+                             text=True, env=e, bufsize=1, errors="replace", start_new_session=True, cwd=cwd)
     except FileNotFoundError:
         on_line(f"no existe el comando: {cmd[0]}")
         return 127

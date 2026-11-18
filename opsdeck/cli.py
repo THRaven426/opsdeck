@@ -3,7 +3,9 @@
   opsdeck                         interfaz visual
   opsdeck modulos                 catálogo y estado de cada módulo
   opsdeck ayuda [módulo] [acción] ayuda
-  opsdeck instalar <módulo|todo>  instala lo que le falta a un módulo, o a todos (pide confirmación)
+  opsdeck instalar <módulo|todo> [--opcionales]
+                                  instala lo que le falta a un módulo, o a todos (pide confirmación);
+                                  --opcionales añade las herramientas que amplían el módulo
   opsdeck edicion                 edición instalada (ligera o completa) y quién accede a la completa
   opsdeck registro [n] [texto]    últimos cambios registrados
   opsdeck resultados [módulo]     escaneos, análisis e informes guardados
@@ -90,6 +92,9 @@ def cmd_modulos() -> int:
         st = m.status()
         color = {"disponible": "green", "instalable": "yellow"}.get(st.state, "red")
         detail = st.reason + (f"  →  {NAME} instalar {m.id}" if st.state == INSTALLABLE else "")
+        opt = m.missing_optional() if st.state == AVAILABLE else []
+        if opt:
+            detail = (detail or m.summary) + f"  (+{len(opt)} opcionales: {NAME} instalar {m.id} --opcionales)"
         t.add_row(f"{m.id} ({m.name})", m.category, f"[{color}]{st.state}[/]", detail or m.summary)
     console.print(t)
     return 0
@@ -110,10 +115,17 @@ def cmd_ayuda(args: list[str]) -> int:
             console.print(f"[red]El módulo {m.id} no tiene la acción '{args[1]}'[/]")
             return 1
         console.print(f"\n[bold]{m.name} › {a.label}[/]\n{a.help}\n")
-        for p in a.visible_params():
-            req = "" if p.required and p.kind != "bool" else " (opcional)"
-            extra = f"  valores: {', '.join(c[0] for c in p.choices)}" if p.choices else ""
-            console.print(f"  --{p.name:<14} {p.label}{req}{extra}" + (f"\n{'':18}{p.help}" if p.help else ""))
+        for title, group in (("", a.basic_params()), ("Opciones avanzadas", a.advanced_params())):
+            if not group:
+                continue
+            if title:
+                console.print(f"\n[bold]{title}[/] (opcionales)")
+            for p in group:
+                req = "" if p.required and p.kind != "bool" else " (opcional)"
+                extra = ("  valores: " + ", ".join(c[0] or "''" for c in p.choices)) if p.choices else ""
+                console.print(f"  --{p.name:<16} {p.label}{req}{extra}" + (f"\n{'':20}{p.help}" if p.help else ""),
+                              markup=False)
+        console.print("\nUn valor que empieza por guion va con '=': --opciones='-sS -p 80'", markup=False)
         console.print(f"\nEjemplo: {NAME} {m.id} {a.id} " +
                       " ".join(f"--{p.name} ..." for p in a.visible_params() if p.required and p.kind != "bool"))
         return 0
@@ -151,13 +163,13 @@ def cmd_edicion() -> int:
     return 0
 
 
-def cmd_instalar_todo(yes: bool) -> int:
-    mods = [m for m in all_modules() if m.status().state == INSTALLABLE]
+def cmd_instalar_todo(yes: bool, opcionales: bool = False) -> int:
+    mods = [m for m in all_modules() if installer.wanted_packages(m, opcionales)]
     if not mods:
         console.print("[green]No falta nada por instalar en esta edición.[/]")
         return 0
     pm = packages.manager()
-    pkgs = pm.missing([p for m in mods for p in m.status().packages])
+    pkgs = pm.missing([p for m in mods for p in installer.wanted_packages(m, opcionales)])
     console.print("Módulos a completar: " + ", ".join(m.name for m in mods))
     pm.refresh(lambda l: console.print(l, markup=False, style="dim"))
     plan = pm.plan(pkgs)
@@ -173,24 +185,28 @@ def cmd_instalar_todo(yes: bool) -> int:
     return 0 if rc == 0 else 1
 
 
-def cmd_instalar(args: list[str], yes: bool) -> int:
+def cmd_instalar(args: list[str], yes: bool, opcionales: bool = False) -> int:
     if not args:
-        console.print(f"Uso: {NAME} instalar <módulo|todo>")
+        console.print(f"Uso: {NAME} instalar <módulo|todo> [--opcionales]")
         return 1
     if args[0] == "todo":
-        return cmd_instalar_todo(yes)
+        return cmd_instalar_todo(yes, opcionales)
     m = module(args[0])
     if not m:
         console.print(f"[red]No existe el módulo '{args[0]}'[/]")
         return 1
     st = m.status()
-    if st.state == AVAILABLE:
+    if st.state == AVAILABLE and not installer.wanted_packages(m, opcionales):
         console.print(f"[green]{m.name} ya tiene todo lo necesario.[/]")
+        falta = [r.describe() for r in m.missing_optional()]
+        if falta and not opcionales:
+            console.print(f"Herramientas opcionales que puedes añadir: {', '.join(falta)}  →  "
+                          f"{NAME} instalar {m.id} --opcionales")
         return 0
-    if st.state != INSTALLABLE:
+    if st.state not in (AVAILABLE, INSTALLABLE):
         console.print(f"[red]{m.name}: {st.reason}[/]")
         return 1
-    plan = installer.prepare(m, lambda l: console.print(l, markup=False, style="dim"))
+    plan = installer.prepare(m, lambda l: console.print(l, markup=False, style="dim"), opcionales)
     console.print("\n" + plan.summary())
     if plan.error or not plan.to_install:
         return 1 if plan.error else 0
@@ -264,13 +280,13 @@ def cmd_autoactualizar(yes: bool) -> int:
 def cmd_accion(m, a, values: dict, yes: bool) -> int:
     pos = values.pop("_pos", [])
     for p in a.visible_params():                       # el primer dato se puede dar sin --nombre
-        if p.name not in values and pos:
+        if p.name not in values and pos and not p.advanced:
             values[p.name] = pos.pop(0)
         if p.name in values or p.kind == "bool":
             if p.kind == "bool" and p.name in values and isinstance(values[p.name], str):
                 values[p.name] = values[p.name].lower() in ("1", "si", "sí", "true", "yes", "s")
             continue
-        if not p.required:
+        if not p.required or p.advanced:
             continue
         if p.default not in ("", None):
             values[p.name] = p.default
@@ -317,7 +333,7 @@ def main(argv: list[str]) -> int:
     if cmd in ("ayuda", "help", "?"):
         return cmd_ayuda(argv[1:])
     if cmd == "instalar":
-        return cmd_instalar(values.get("_pos", []), yes)
+        return cmd_instalar(values.get("_pos", []), yes, bool(values.get("opcionales")))
     if cmd == "registro":
         return cmd_registro(argv[1:])
     if cmd in ("edicion", "edición"):

@@ -131,3 +131,14 @@ ModalScreen {
 #catalog-buttons Button {
     margin-right: 2;
 }
+
+#adv-box {
+    height: auto;
+    border-left: tall $accent;
+    padding-left: 1;
+    margin-top: 1;
+}
+
+#adv-toggle {
+    margin-top: 1;
+}

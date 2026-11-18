@@ -188,3 +188,26 @@ async def test_resultados_y_grupos():
         await pilot.press("escape")
         await pilot.pause()
         assert app.screen is app.main
+
+
+async def test_opciones_avanzadas_ocultas_hasta_pedirlas():
+    from textual.widgets import Checkbox, Input
+    from opsdeck.core.catalog import module
+    app = OpsdeckApp()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        m = module("escaneo")
+        a = m.action("escanear")
+        app.push_screen(FormScreen(m, a))
+        await pilot.pause()
+        scr = app.screen
+        box = scr.query_one("#adv-box")
+        assert not box.display
+        assert scr.focused is scr.query_one("#f-objetivo", Input)
+        scr.query_one("#adv-toggle", Checkbox).value = True
+        await pilot.pause()
+        assert box.display
+        scr.query_one("#f-puertos", Input).value = "22,443"
+        vals = scr.values()
+        assert vals["puertos"] == "22,443" and "perfil" in vals and "adv-toggle" not in vals
+        await pilot.press("escape")

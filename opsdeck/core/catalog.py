@@ -31,10 +31,12 @@ class Req:
             return Path(self.value).exists()
         if self.kind == "unit":
             return system.unit_exists(self.value)
+        if self.kind == "anycmd":
+            return any(system.has_cmd(c) for c in self.value.split())
         return False
 
     def describe(self) -> str:
-        return self.label or {"cmd": "comando", "file": "fichero", "unit": "servicio"}[self.kind] + f" {self.value}"
+        return self.label or {"cmd": "comando", "anycmd": "comando", "file": "fichero", "unit": "servicio"}[self.kind] + f" {self.value}"
 
     def pkgs(self) -> list[str]:
         return self.packages.get(system.os_family(), [])
@@ -42,6 +44,11 @@ class Req:
 
 def cmd(name, debian=None, rhel=None, suse=None, arch=None, label=""):
     return Req("cmd", name, _pk(debian, rhel, suse, arch), label)
+
+
+def any_cmd(names: list[str], debian=None, rhel=None, suse=None, arch=None, label="") -> Req:
+    """Requisito que se cumple con cualquiera de varios comandos (p. ej. testssl o testssl.sh)."""
+    return Req("anycmd", " ".join(names), _pk(debian, rhel, suse, arch), label or names[0])
 
 
 def file(path, debian=None, rhel=None, suse=None, arch=None, label=""):
@@ -70,6 +77,7 @@ class Param:
     help: str = ""
     when: Optional[Callable[[], bool]] = None    # solo se pide si devuelve True
     suggest: Optional[Callable[[], list[str]]] = None   # valores que se proponen al escribir
+    advanced: bool = False       # opción avanzada: el formulario la oculta hasta que se pide
 
 
 @dataclass
@@ -100,6 +108,12 @@ class Action:
 
     def visible_params(self) -> list[Param]:
         return [p for p in self.params if p.when is None or p.when()]
+
+    def basic_params(self) -> list[Param]:
+        return [p for p in self.visible_params() if not p.advanced]
+
+    def advanced_params(self) -> list[Param]:
+        return [p for p in self.visible_params() if p.advanced]
 
 
 # ---------------------------------------------------------------- salida
@@ -145,6 +159,7 @@ class Module:
     requires: list[Req] = []
     families: tuple[str, ...] = ("debian", "rhel", "suse", "arch")
     full: bool = False                # True = solo en la edición completa (y para su grupo)
+    optional: list[Req] = []          # herramientas que amplían el módulo (no imprescindibles)
 
     def actions(self) -> list[Action]:
         return []
@@ -170,6 +185,10 @@ class Module:
             return Status(INSTALLABLE, missing, list(dict.fromkeys(pkgs)),
                           "Falta: " + ", ".join(r.describe() for r in missing))
         return Status(UNAVAILABLE, missing, reason="Falta: " + ", ".join(r.describe() for r in missing))
+
+    def missing_optional(self) -> list[Req]:
+        """Herramientas opcionales que faltan y se pueden instalar en esta distribución."""
+        return [r for r in self.optional if not r.ok() and r.pkgs()]
 
     def action(self, action_id: str) -> Optional[Action]:
         return next((a for a in self.actions() if a.id == action_id), None)

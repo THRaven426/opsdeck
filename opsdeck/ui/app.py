@@ -132,51 +132,78 @@ class FormScreen(ModalScreen[Optional[dict]]):
         self.params = action.visible_params()
 
     def compose(self) -> ComposeResult:
+        basic = [p for p in self.params if not p.advanced]
+        adv = [p for p in self.params if p.advanced]
         with Vertical(classes="dialog"):
             yield Static(f"{self.module.name} › {self.action_def.label}", classes="dialog-title")
             if self.action_def.help:
                 yield Static(self.action_def.help, classes="hint")
             yield Static("Intro = aceptar · Esc = cancelar · F1 = ayuda · Espacio = marcar casillas", classes="hint")
             with VerticalScroll(id="form-fields"):
-                for p in self.params:
-                    wid = f"f-{p.name}"
-                    optional = "" if p.required and p.kind != "bool" else "  (opcional)"
-                    if p.kind == "bool":
-                        yield FormCheckbox(p.label, bool(p.default), id=wid)
-                    else:
-                        yield Label(p.label + optional, classes="field-label")
-                        if p.kind == "choice":
-                            yield Select([(text, val) for val, text in p.choices], value=p.default or p.choices[0][0],
-                                         allow_blank=False, id=wid)
-                        elif p.kind in ("user", "group"):
-                            names = accounts.human_names() if p.kind == "user" else \
-                                [g.gr_name for g in accounts.local_groups()]
-                            yield Input(str(p.default or ""), id=wid, suggester=SuggestFromList(names),
-                                        placeholder="Empieza a escribir; → acepta la sugerencia")
-                            if p.kind == "user" and len(names) <= 25:
-                                p_help = "Usuarios: " + ", ".join(names)
-                                yield Static(p_help + (("\n" + p.help) if p.help else ""), classes="hint")
-                                continue
-                        else:
-                            sug = None
-                            if p.suggest:
-                                try:
-                                    sug = SuggestFromList(p.suggest(), case_sensitive=False)
-                                except Exception:
-                                    sug = None
-                            yield Input(str(p.default or ""), id=wid, password=p.kind == "password",
-                                        type="integer" if p.kind == "int" else "text", suggester=sug,
-                                        placeholder="Empieza a escribir; → acepta la sugerencia" if sug else "")
-                    if p.help:
-                        yield Static(p.help, classes="hint")
+                for p in basic:
+                    yield from self._field(p)
+                if adv:
+                    yield FormCheckbox(f"Mostrar opciones avanzadas ({len(adv)})", False, id="adv-toggle")
+                    with Vertical(id="adv-box"):
+                        yield Static("Opciones avanzadas: déjalas como están si no sabes qué hacen; "
+                                     "los valores por defecto son los recomendados.", classes="hint")
+                        for p in adv:
+                            yield from self._field(p)
             yield Static("", id="error")
             with Horizontal(classes="buttons"):
                 yield Button("Cancelar", id="cancel")
                 yield Button("Aceptar", variant="primary", id="ok")
 
+    def _field(self, p) -> ComposeResult:
+        wid = f"f-{p.name}"
+        optional = "" if p.required and p.kind != "bool" else "  (opcional)"
+        if p.kind == "bool":
+            yield FormCheckbox(p.label, bool(p.default), id=wid)
+        else:
+            yield Label(p.label + optional, classes="field-label")
+            if p.kind == "choice":
+                yield Select([(text, val) for val, text in p.choices], value=p.default or p.choices[0][0],
+                             allow_blank=False, id=wid)
+            elif p.kind in ("user", "group"):
+                names = accounts.human_names() if p.kind == "user" else \
+                    [g.gr_name for g in accounts.local_groups()]
+                yield Input(str(p.default or ""), id=wid, suggester=SuggestFromList(names),
+                            placeholder="Empieza a escribir; → acepta la sugerencia")
+                if p.kind == "user" and len(names) <= 25:
+                    p_help = "Usuarios: " + ", ".join(names)
+                    yield Static(p_help + (("\n" + p.help) if p.help else ""), classes="hint")
+                    return
+            else:
+                sug = None
+                if p.suggest:
+                    try:
+                        sug = SuggestFromList(p.suggest(), case_sensitive=False)
+                    except Exception:
+                        sug = None
+                yield Input(str(p.default if p.default is not None else ""), id=wid, password=p.kind == "password",
+                            type="integer" if p.kind == "int" else "text", suggester=sug,
+                            placeholder="Empieza a escribir; → acepta la sugerencia" if sug else "")
+        if p.help:
+            yield Static(p.help, classes="hint")
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id == "adv-toggle":
+            box = self.query_one("#adv-box")
+            box.display = bool(event.value)
+            if event.value:
+                first = next((p for p in self.params if p.advanced), None)
+                if first:
+                    self.query_one(f"#f-{first.name}").focus()
+                    box.scroll_visible()
+
     def on_mount(self) -> None:
-        if self.params:
-            self.query_one(f"#f-{self.params[0].name}").focus()
+        if any(p.advanced for p in self.params):
+            self.query_one("#adv-box").display = False
+        first = next((p for p in self.params if not p.advanced), None) or (self.params[0] if self.params else None)
+        if first and not first.advanced:
+            self.query_one(f"#f-{first.name}").focus()
+        elif first:
+            self.query_one("#adv-toggle").focus()
 
     def values(self) -> dict:
         out = {}
@@ -215,11 +242,14 @@ class FormScreen(ModalScreen[Optional[dict]]):
 def action_help(module: Module, action: Action) -> str:
     lines = [f"# {module.name} › {action.label}", "", action.help or "", ""]
     params = action.visible_params()
-    if params:
-        lines += ["## Datos que pide", ""]
-        for p in params:
+    for title, group in (("## Datos que pide", [p for p in params if not p.advanced]),
+                         ("## Opciones avanzadas (opcionales)", [p for p in params if p.advanced])):
+        if not group:
+            continue
+        lines += [title, ""]
+        for p in group:
             opt = "" if p.required and p.kind != "bool" else " *(opcional)*"
-            lines.append(f"- **{p.label}**{opt}" + (f": {p.help}" if p.help else ""))
+            lines.append(f"- **{p.label}** (`--{p.name}`){opt}" + (f": {p.help}" if p.help else ""))
             for val, text in p.choices:
                 lines.append(f"  - `{val}`: {text}")
         lines.append("")
@@ -237,7 +267,8 @@ def action_help(module: Module, action: Action) -> str:
 
 class CatalogScreen(Screen):
     BINDINGS = [Binding("escape", "back", "Volver"), Binding("r", "rescan", "Volver a detectar"),
-                Binding("i", "install", "Instalar lo que falta"), Binding("v", "toggle", "Mostrar/ocultar"),
+                Binding("i", "install", "Instalar lo que falta"), Binding("o", "install_optional", "Instalar opcionales"),
+                Binding("v", "toggle", "Mostrar/ocultar"),
                 Binding("question_mark", "help", "Ayuda")]
 
     def compose(self) -> ComposeResult:
@@ -247,6 +278,7 @@ class CatalogScreen(Screen):
         yield DataTable(id="catalog-table", cursor_type="row", zebra_stripes=True)
         with Horizontal(id="catalog-buttons"):
             yield Button("Instalar lo que falta (i)", id="install", variant="primary")
+            yield Button("Herramientas opcionales (o)", id="install_optional")
             yield Button("Mostrar / ocultar en el menú (v)", id="toggle")
             yield Button("Volver a detectar (r)", id="rescan")
             yield Button("Volver (Esc)", id="back")
@@ -270,6 +302,9 @@ class CatalogScreen(Screen):
             detail = st.reason or m.summary
             if st.state == INSTALLABLE:
                 detail += "  ·  paquetes: " + " ".join(st.packages)
+            opt = m.missing_optional() if st.state == AVAILABLE else []
+            if opt:
+                detail += f"  ·  +{len(opt)} opcionales (o): " + ", ".join(r.describe() for r in opt)
             t.add_row(m.name, m.category, state, "no" if m.id in hidden else "sí", detail, key=m.id)
 
     def selected(self) -> Optional[Module]:
@@ -306,6 +341,19 @@ class CatalogScreen(Screen):
         m = self.selected()
         self.app.push_screen(HelpScreen(m.help if m else WELCOME))
 
+    def action_install_optional(self) -> None:
+        m = self.selected()
+        if not m:
+            return
+        log = self.query_one(RichLog)
+        if not installer.wanted_packages(m, opcionales=True):
+            log.write(f"{m.name}: no hay herramientas opcionales que instalar en este equipo.")
+            return
+        if not system.is_root():
+            log.write("Para instalar paquetes abre la herramienta con sudo.")
+            return
+        self.prepare_install(m, True)
+
     def action_install(self) -> None:
         m = self.selected()
         if not m:
@@ -313,7 +361,8 @@ class CatalogScreen(Screen):
         st = m.status()
         log = self.query_one(RichLog)
         if st.state == AVAILABLE:
-            log.write(f"{m.name} ya tiene todo lo necesario.")
+            log.write(f"{m.name} ya tiene todo lo necesario."
+                      + (" Tiene herramientas opcionales: pulsa o." if m.missing_optional() else ""))
             return
         if st.state != INSTALLABLE:
             log.write(f"{m.name} no se puede instalar en este equipo: {st.reason}")
@@ -324,11 +373,11 @@ class CatalogScreen(Screen):
         self.prepare_install(m)
 
     @work(thread=True, exclusive=True, group="install")
-    def prepare_install(self, m: Module) -> None:
+    def prepare_install(self, m: Module, opcionales: bool = False) -> None:
         log = self.query_one(RichLog)
         say = lambda l: self.app.call_from_thread(log.write, l)
-        say(f"Preparando la instalación de {m.name}...")
-        plan = installer.prepare(m, say)
+        say(f"Preparando la instalación de {m.name}" + (" (herramientas opcionales)" if opcionales else "") + "...")
+        plan = installer.prepare(m, say, opcionales)
         say(plan.summary())
         if plan.error or not plan.to_install:
             return

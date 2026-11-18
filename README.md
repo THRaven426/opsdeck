@@ -8,7 +8,7 @@ Administra equipos, únelos a Active Directory, revisa su seguridad, analiza red
 y responde a incidentes, desde un menú visual en la terminal o en una línea de comando.
 
 [![Estrellas](https://img.shields.io/github/stars/THRaven426/opsdeck?style=for-the-badge&logo=github&color=f5c518)](https://github.com/THRaven426/opsdeck/stargazers)
-[![Versión](https://img.shields.io/badge/versión-2.3.0-2ea44f?style=for-the-badge)](https://github.com/THRaven426/opsdeck/commits/main)
+[![Versión](https://img.shields.io/badge/versión-2.4.0-2ea44f?style=for-the-badge)](https://github.com/THRaven426/opsdeck/commits/main)
 ![Python](https://img.shields.io/badge/python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white)
 ![Plataforma](https://img.shields.io/badge/Debian_·_Ubuntu_·_Kali-probado-a81d33?style=for-the-badge&logo=linux&logoColor=white)
 ![Ediciones](https://img.shields.io/badge/ediciones-ligera_·_completa-8250df?style=for-the-badge)
@@ -73,6 +73,8 @@ Un solo programa, dos ediciones. Se elige al instalar y se puede cambiar reinsta
 | Triaje de incidentes y recogida de evidencias | — | ✅ |
 | Bastionado (Lynis), antimalware, rootkits, integridad | — | ✅ |
 | SMB y Windows, web y TLS, vulnerabilidades (nuclei) | — | ✅ |
+| TLS de cualquier servicio, auditoría SSH, servicios expuestos | — | ✅ |
+| Importar informes de Nessus/OpenVAS y volver a verificar | — | ✅ |
 | Acceso | Cualquier administrador del equipo | Solo miembros del grupo `opsdeck-completa` |
 
 En la edición completa, los módulos avanzados solo los puede usar quien esté en el grupo
@@ -133,8 +135,18 @@ opsdeck usuarios crear --usuario jperez --grupos sudo
 opsdeck revision revisar                          # revisión de seguridad
 opsdeck escaneo descubrir --objetivo 192.168.0.0/24
 opsdeck trafico capturar --interfaz eth0 --segundos 60     # edición completa
+opsdeck escaneo escanear --objetivo 10.0.0.0/24 --perfil estandar --tiempo T2 --puertos 22,443,3389
+opsdeck nuclei analizar --objetivo https://intranet --etiquetas cve,panel --velocidad 30
+opsdeck informes importar --fichero /root/escaneo.nessus   # y después: informes verificar
 opsdeck registro 20 jperez                        # quién tocó esa cuenta
 ```
+
+**Opciones avanzadas.** Cada herramienta se lanza por defecto con valores recomendados. Si quieres
+más control, el formulario tiene la casilla **«Mostrar opciones avanzadas»** (velocidad, hilos,
+puertos, plantillas, etiquetas, cabeceras, proxy, modos de cada herramienta y opciones libres) y en la
+línea de comandos son `--opcion valor` normales (`opsdeck ayuda <módulo> <acción>` las lista). Las
+opciones libres nunca pasan por una shell y no pueden cambiar dónde se guardan los resultados ni
+saltarse la barandilla de alcance.
 
 La guía completa está en [HELP.md](HELP.md) y dentro de la herramienta.
 
@@ -170,12 +182,21 @@ La guía completa está en [HELP.md](HELP.md) y dentro de la herramienta.
 
 | Módulo | Edición | Qué resuelve |
 |---|:---:|---|
-| **Escaneo de red (nmap)** | ligera / completa | Descubrir equipos, perfiles de escaneo, resumen de una línea por equipo y comparación entre escaneos |
-| **Tráfico de red** | completa | Captura y resumen: quién habla con quién, DNS, protocolos sin cifrar, señales de suplantación ARP; descubrimiento pasivo sin enviar un paquete |
-| **SMB y Windows** | completa | SMBv1, firma SMB (relay NTLM), recursos accesibles sin credenciales o con una cuenta |
-| **Web y TLS** | completa | Certificados que caducan, TLS obsoleto y cabeceras, de una web o de todas las del último escaneo; whatweb, nikto, testssl y rutas si están instalados |
-| **Vulnerabilidades (nuclei)** | completa | Vulnerabilidades conocidas comprobadas con plantillas |
+| **Escaneo de red (nmap)** | ligera / completa | Descubrir equipos (ICMP, ARP, TCP), 8 perfiles (también «scripts seguros» e «infraestructura»), opciones avanzadas de nmap, resumen de una línea por equipo y comparación entre escaneos |
+| **Servicios expuestos** | completa | Por servicio, la debilidad típica de los informes: RDP sin NLA, iSCSI sin autenticación, SNMP «public», NFS abierto, LDAP anónimo, DNS recursivo o con AXFR, NTP monlist, FTP/TFTP anónimos, BBDD/Redis/MongoDB/Elasticsearch/Docker/VNC sin contraseña, IPMI cifrado 0, UPnP, SMTP; fugas ICMP/TCP timestamp; protocolos de difusión y DHCP no autorizado |
+| **TLS y certificados** | completa | Cualquier servicio con TLS (web, RDP, LDAPS, correo con STARTTLS, BBDD, iLO...): SSL 2/3, TLS 1.0/1.1, SWEET32, RC4, anónimos, NULL/EXPORT, firma débil, claves cortas, autofirmados, no confiables, nombre equivocado, caducidad, DH débil, renegociación, Heartbleed/POODLE; inventario de caducidad |
+| **Auditoría SSH** | completa | Algoritmos débiles (KEX, cifrados CBC, MAC, claves de equipo), Terrapin, contraseña aceptada, versión y CVE (ssh-audit) |
+| **SMB y Windows** | completa | SMBv1, firma SMB (relay NTLM), MS17-010 y similares, recursos accesibles; netexec por protocolo con enumeración de solo lectura y módulos de comprobación; enum4linux-ng |
+| **Web y TLS** | completa | Cabeceras, cookies, métodos HTTP, formularios sin cifrar, páginas por defecto, ficheros sensibles (.git, .env, copias, phpinfo...), certificados y TLS; whatweb, nikto, testssl, ffuf/feroxbuster/gobuster, wafw00f y wpscan con sus opciones |
+| **Vulnerabilidades (nuclei)** | completa | Análisis por severidad, **dirigido por los productos del último escaneo**, paneles/credenciales por defecto/fugas; todas las opciones de nuclei (etiquetas, plantillas, protocolos, velocidad, cabeceras, proxy) |
+| **Tráfico de red** | completa | Captura y resumen: quién habla con quién, DNS, protocolos sin cifrar, señales de suplantación ARP; descubrimiento pasivo (también LLMNR/NBT-NS/mDNS); Responder en modo análisis |
+| **Informes Nessus / OpenVAS** | completa | Importa .nessus, XML, CSV o PDF; resumen, plan de verificación con listas de objetivos y **re-verificación** (sigue / no reproducido / no accesible) |
 | **Fuentes de datos** | ligera / completa | Antigüedad y actualización de las bases de detección: plantillas de nuclei, exploit-db y parches |
+
+Las herramientas que amplían un módulo pero no son imprescindibles (sslscan, ssh-audit, testssl,
+ffuf, wafw00f, netexec, enum4linux-ng, Responder, pdftotext...) se instalan desde el **Catálogo**
+(tecla `o`) o con `opsdeck instalar <módulo> --opcionales`; las que no estén en los repositorios
+de la distribución (algunas solo están en Kali) se indican pero no se fuerzan.
 
 Tras un escaneo, un análisis SMB o una revisión web, opsdeck añade un apartado **«Recomendaciones
 (siguiente paso)»**: por cada hallazgo propone qué confirmar, mitigar o parchear, señala la acción o
@@ -249,6 +270,8 @@ Las pruebas crean y borran cuentas y ficheros de prueba: ejecútalas en una máq
 - [x] Recomendación del siguiente paso según los descubrimientos (con consulta de exploit público)
 - [x] Fuentes de detección al día (aviso de plantillas/exploit-db/parches desactualizados)
 - [x] Dominio: revisión única (unido o no), diagnóstico de contraseña caducada y reparto por ediciones
+- [x] Opciones avanzadas en todas las herramientas; herramientas opcionales instalables
+- [x] TLS de cualquier servicio, auditoría SSH, servicios expuestos, importación y re-verificación de informes Nessus/OpenVAS
 - [ ] Hallazgos unificados y persistentes con estado (abierto / corregido / aceptado)
 - [ ] Flujos guiados: alta de equipo, auditoría de red, securizar un equipo
 - [ ] Informe consolidado por equipo y por red

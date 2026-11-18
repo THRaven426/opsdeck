@@ -1,0 +1,16 @@
+<?xml version="1.0" ?>
+<NessusClientData_v2>
+<Report name="prueba">
+<ReportHost name="127.0.0.1"><HostProperties><tag name="host-ip">127.0.0.1</tag></HostProperties>
+<ReportItem port="8443" svc_name="www" protocol="tcp" severity="2" pluginID="104743" pluginName="TLS Version 1.0 Protocol Detection" pluginFamily="Service detection"><risk_factor>Medium</risk_factor><cvss3_base_score>6.5</cvss3_base_score></ReportItem>
+<ReportItem port="8443" svc_name="www" protocol="tcp" severity="2" pluginID="57582" pluginName="SSL Self-Signed Certificate" pluginFamily="General"><risk_factor>Medium</risk_factor></ReportItem>
+<ReportItem port="8443" svc_name="www" protocol="tcp" severity="3" pluginID="42873" pluginName="SSL Medium Strength Cipher Suites Supported (SWEET32)" pluginFamily="General"><risk_factor>High</risk_factor></ReportItem>
+<ReportItem port="445" svc_name="cifs" protocol="tcp" severity="2" pluginID="57608" pluginName="SMB Signing not required" pluginFamily="Misc."><risk_factor>Medium</risk_factor></ReportItem>
+<ReportItem port="22" svc_name="ssh" protocol="tcp" severity="1" pluginID="70658" pluginName="SSH Server CBC Mode Ciphers Enabled" pluginFamily="Misc."><risk_factor>Low</risk_factor></ReportItem>
+<ReportItem port="22" svc_name="ssh" protocol="tcp" severity="0" pluginID="149334" pluginName="SSH Password Authentication Accepted" pluginFamily="Misc."><risk_factor>None</risk_factor></ReportItem>
+<ReportItem port="0" svc_name="general" protocol="icmp" severity="2" pluginID="10114" pluginName="ICMP Timestamp Request Remote Date Disclosure" pluginFamily="General"><risk_factor>Medium</risk_factor></ReportItem>
+<ReportItem port="22" svc_name="ssh" protocol="tcp" severity="4" pluginID="326244" pluginName="OpenSSH &lt; 99.0 Multiple Vulnerabilities" pluginFamily="Misc."><risk_factor>Critical</risk_factor><cve>CVE-2099-0001</cve></ReportItem>
+<ReportItem port="6379" svc_name="redis" protocol="tcp" severity="3" pluginID="100634" pluginName="Redis Server Unprotected by Password Authentication" pluginFamily="Databases"><risk_factor>High</risk_factor></ReportItem>
+</ReportHost>
+</Report>
+</NessusClientData_v2>

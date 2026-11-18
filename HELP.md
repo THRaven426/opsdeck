@@ -31,6 +31,11 @@ Escribe solo `opsdeck`: la herramienta se relanza sola con `sudo` y te pide tu c
 **En los formularios:** Intro = aceptar · Esc = cancelar · **F1 = ayuda** de esa acción ·
 Espacio = marcar o desmarcar casillas.
 
+**Opciones avanzadas:** muchos formularios tienen al final la casilla **«Mostrar opciones
+avanzadas»**. Sin tocarla, la herramienta se lanza con los valores recomendados; marcándola puedes
+ajustar velocidad, hilos, puertos, plantillas, etiquetas, cabeceras, proxy, el modo de cada
+herramienta y añadir opciones propias. F1 explica cada una.
+
 1. Elige un **módulo** a la izquierda.
 2. Elige una **acción**. Las marcadas con **●** cambian algo en el sistema.
 3. Si necesita datos, se abre un formulario. Las acciones delicadas piden confirmación.
@@ -40,7 +45,7 @@ Espacio = marcar o desmarcar casillas.
 
 - **Ligera**: administración diaria (todo *Sistemas*), la *Revisión de seguridad* y el escaneo de red básico.
 - **Completa**: además, tráfico, triaje de incidentes, bastionado, antimalware, auditoría de SMB,
-  web y vulnerabilidades. Estos módulos solo los usan los miembros del grupo `opsdeck-completa`.
+  web, TLS, SSH, servicios expuestos, vulnerabilidades e informes de Nessus/OpenVAS. Estos módulos solo los usan los miembros del grupo `opsdeck-completa`.
 
 `opsdeck edicion` dice cuál tienes y quién tiene acceso. Se cambia con
 `sudo ./install.sh --edicion completa` (o `ligera`). En el Catálogo, lo que no es de tu edición o
@@ -81,10 +86,18 @@ no tienes permiso para usar aparece como "no aplica" con el motivo.
 | Módulo | Para qué sirve |
 |---|---|
 | Escaneo de red | Qué equipos y servicios hay, y qué ha cambiado desde el último escaneo |
-| Tráfico de red | Capturar y resumir tráfico; ver qué equipos hay sin enviar nada a la red |
-| SMB y Windows | SMBv1, firma SMB y recursos compartidos accesibles |
-| Web y TLS | Certificados que caducan, TLS obsoleto, cabeceras; de una web o de todas |
-| Vulnerabilidades (nuclei) | Vulnerabilidades conocidas comprobadas de verdad |
+| Servicios expuestos | La debilidad típica de cada servicio (RDP sin NLA, SNMP «public», iSCSI, NFS, BBDD sin contraseña...) y las fugas ICMP/TCP timestamp |
+| TLS y certificados | TLS y certificados de cualquier servicio: versiones, cifrados débiles, caducidad, confianza |
+| Auditoría SSH | Algoritmos débiles, Terrapin, contraseña aceptada y versión de los SSH de la red |
+| SMB y Windows | SMBv1, firma SMB, recursos compartidos; netexec y enum4linux-ng si están |
+| Web y TLS | Cabeceras, cookies, métodos, ficheros sensibles, certificados; nikto, testssl, rutas, WAF, WordPress |
+| Vulnerabilidades (nuclei) | Vulnerabilidades conocidas comprobadas de verdad, también dirigidas por el último escaneo |
+| Tráfico de red | Capturar y resumir tráfico; ver qué equipos hay (y quién usa LLMNR/NBT-NS) sin enviar nada |
+| Informes Nessus / OpenVAS | Importar el informe del escáner, repartir el trabajo y volver a verificar tras corregir |
+
+**Flujo típico de una auditoría:** *Escaneo* (perfil estándar o infraestructura) → *Servicios
+expuestos*, *TLS*, *SSH*, *SMB* y *Web* sobre el último escaneo → *nuclei* dirigido → corregir →
+repetir o, si partes de un informe de Nessus/OpenVAS, *Informes › Volver a verificar*.
 
 Algunos módulos dependen de programas que quizá no tengas: aparecen en el *Catálogo* para
 instalarlos cuando los necesites.
@@ -100,6 +113,8 @@ En el **Catálogo** (tecla **c**) están todos los módulos:
 - **✓ disponible**: aparece en el menú.
 - **⬇ se puede instalar**: falta algún programa. Pulsa **i** y verás qué se va a instalar y
   cuánto ocupa, igual que con `apt`. No se instala nada sin tu confirmación.
+- **+N opcionales**: el módulo funciona, pero hay herramientas que lo amplían (sslscan, ssh-audit,
+  testssl, ffuf...). Pulsa **o** para instalarlas.
 - **— no aplica**: no se puede usar en este equipo (por ejemplo, otra distribución).
 
 Desde el catálogo también puedes **ocultar** módulos que no uses (tecla **v**).
@@ -117,15 +132,22 @@ opsdeck usuarios crear --usuario jperez --nombre "Juan Pérez" --grupos sudo --n
 opsdeck usuarios bloquear jperez --si            # --si confirma sin preguntar
 opsdeck instalar rdp                             # instalar lo que le falta a un módulo
 opsdeck instalar todo                            # todas las herramientas de tu edición, de una vez
+opsdeck instalar web --opcionales                # también las herramientas opcionales de un módulo
 opsdeck edicion                                  # edición instalada y quién accede a la completa
 opsdeck registro 20 jperez                       # últimos 20 cambios que mencionan a jperez
 opsdeck resultados escaneo                       # escaneos guardados
 opsdeck revision revisar                         # revisión de seguridad completa
 opsdeck escaneo escanear --objetivo 192.168.0.0/24 --perfil rapido
+opsdeck escaneo escanear --objetivo 10.0.0.5 --perfil estandar --puertos 1-2000 --tiempo T2 --sin_ping
+opsdeck nuclei analizar --objetivo https://intranet --etiquetas cve --velocidad 20 --si
+opsdeck tls revisar                              # TLS de todos los servicios del último escaneo
+opsdeck informes importar --fichero informe.nessus && opsdeck informes verificar --si
 opsdeck autoactualizar                           # actualizar la herramienta (si se instaló con git)
 ```
 
-Si falta un dato obligatorio y estás en una terminal, te lo pregunta.
+Si falta un dato obligatorio y estás en una terminal, te lo pregunta. Las opciones avanzadas
+también van con `--nombre valor` (`opsdeck ayuda <módulo> <acción>` las lista); un valor que
+empieza por guion se escribe con `=`: `--extra='--reason -sV'`.
 
 ## Dónde guarda las cosas
 
