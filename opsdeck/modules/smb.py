@@ -301,7 +301,7 @@ DoublePulsar (scripts de solo comprobación), puertos, velocidad, scripts y opci
                 tooling.p_extra("nmap")]),
             Action("compartidos", "Recursos compartidos de un equipo", compartidos, params=[
                 Param("equipo", "Equipo (IP o nombre)"),
-                Param("usuario", "Cuenta (opcional, DOMINIO\\usuario)", required=False),
+                Param("usuario", "Cuenta (DOMINIO\\usuario)", required=False),
                 Param("password", "Contraseña (si indicas cuenta)", "password", required=False),
                 scope.ok_param()]),
             Action("netexec", "Barrido con netexec", netexec, requires=[any_cmd(["netexec", "nxc"])], params=[
@@ -319,6 +319,6 @@ DoublePulsar (scripts de solo comprobación), puertos, velocidad, scripts y opci
                                   "(un fallo repetido puede bloquear la cuenta)" if v.get("usuario") else ""),
             Action("enum4linux", "Enumeración completa (enum4linux-ng)", enum4linux, requires=[cmd("enum4linux-ng")],
                    params=[Param("equipo", "Equipo (IP o nombre)"), scope.ok_param(),
-                           Param("usuario", "Cuenta (opcional)", **A), Param("password", "Contraseña", "password", **A),
+                           Param("usuario", "Cuenta", **A), Param("password", "Contraseña", "password", **A),
                            Param("rapido", "Sin consultas lentas (-As)", "bool", False, **A)]),
         ]

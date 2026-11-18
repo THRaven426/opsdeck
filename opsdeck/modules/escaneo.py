@@ -501,7 +501,7 @@ Debian/Ubuntu suele exagerar (no ve los parches aplicados).
     def actions(self):
         obj = Param("objetivo", "Objetivo", suggest=_subnets,
                     help="IP, red (192.168.0.0/24), rango, varios separados por espacio o ruta a un fichero")
-        exc = Param("excluir", "Excluir (opcional, separados por coma)", required=False)
+        exc = Param("excluir", "Excluir (separados por coma)", required=False)
         A = dict(required=False, advanced=True)
         return [
             Action("descubrir", "Descubrir equipos", descubrir, params=[

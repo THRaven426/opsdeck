@@ -436,7 +436,7 @@ repetir los datos: se guardan servidor, base y cuenta, **nunca la contraseña**.
                   help="Nombre o IP de un controlador de dominio"),
             Param("usuario", "Cuenta de consulta (usuario@dominio)", default=_default("usuario")()),
             Param("password", "Contraseña", "password", help="No se guarda."),
-            Param("base", "Base de búsqueda (opcional)", default=_default("base")(), required=False,
+            Param("base", "Base de búsqueda", default=_default("base")(), required=False,
                   help="Se deduce de usuario@dominio. Ej.: DC=empresa,DC=local"),
             Param("cifrado", "Cifrado", "choice", _default("cifrado", "ldaps")(), choices=[
                 ("ldaps", "LDAPS (recomendado)"), ("starttls", "StartTLS"), ("plano", "Sin cifrar (no recomendado)")]),

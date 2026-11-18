@@ -338,6 +338,6 @@ Un aviso no es una prueba de compromiso: compáralo con lo que sabes que deberí
             Action("recientes", "Ficheros recientes y SUID", recientes,
                    params=[Param("dias", "Días hacia atrás", "int", 2, required=False)]),
             Action("evidencias", "Recoger evidencias", evidencias,
-                   params=[Param("motivo", "Motivo o referencia del incidente (opcional)", required=False)],
+                   params=[Param("motivo", "Motivo o referencia del incidente", required=False)],
                    help="Paquete comprimido con todo lo relevante y su manifiesto de hashes."),
         ]

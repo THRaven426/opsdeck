@@ -228,5 +228,5 @@ Nota: si las conexiones pasan por un firewall con NAT, la IP de origen será la 
             Action("sudo", "Uso de sudo", sudo_uso, params=[per]),
             Action("buscar", "Buscar en los registros", buscar, params=[
                 Param("texto", "Texto a buscar"), per,
-                Param("servicio", "Solo de este servicio (opcional)", required=False)]),
+                Param("servicio", "Solo de este servicio", required=False)]),
         ]

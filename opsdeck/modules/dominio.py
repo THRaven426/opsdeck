@@ -616,10 +616,10 @@ servicio **sssd** en *Servicios*.
                 dom,
                 Param("usuario", "Cuenta del dominio con permiso para unir equipos", help="Ej.: administrador"),
                 Param("password", "Contraseña de esa cuenta", "password", help="Se usa una vez y no se guarda."),
-                Param("ou", "Unidad organizativa (opcional)", required=False),
+                Param("ou", "Unidad organizativa", required=False),
                 Param("permitidos", "Grupos que pueden entrar (separados por coma, opcional)", required=False,
                       help="Vacío = todo el dominio. Ej.: IT, Administradores Linux"),
-                Param("sudo", "Grupo del dominio que será administrador (opcional)", required=False),
+                Param("sudo", "Grupo del dominio que será administrador", required=False),
                 Param("home", "Crear la carpeta personal al entrar", "bool", True, required=False),
                 Param("cortos", "Entrar con nombre corto (sin @dominio)", "bool", True, required=False)],
                 confirm="Se unirá este equipo al dominio {dominio} con la cuenta {usuario}. ¿Continuar?",
@@ -645,7 +645,7 @@ servicio **sssd** en *Servicios*.
             Action("sudo_quitar", "Quitar sudo a un grupo del dominio", sudo_quitar, changes=True, full=True,
                    params=[Param("grupo", "Grupo del dominio")]),
             Action("salir", "Salir del dominio", salir, changes=True, full=True, params=[
-                Param("usuario", "Cuenta del dominio (opcional, para borrar el equipo del AD)", required=False),
+                Param("usuario", "Cuenta del dominio (para borrar el equipo del AD)", required=False),
                 Param("password", "Contraseña (si indicas cuenta)", "password", required=False)],
                 confirm="El equipo saldrá del dominio y sus usuarios no podrán entrar. ¿Continuar?"),
         ]

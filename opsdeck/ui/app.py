@@ -47,7 +47,13 @@ class TuiOut:
         self.app, self.log = app, log
 
     def _w(self, renderable) -> None:
-        self.app.call_from_thread(self.log.write, renderable)
+        self.app.call_from_thread(self._write, renderable)
+
+    def _write(self, renderable) -> None:
+        # Se pasa el ancho real del panel: si no, RichLog mide con el ancho de la consola interna
+        # (80 columnas en algunos terminales) y las tablas y líneas largas se cortan a media pantalla.
+        w = self.log.scrollable_content_region.width
+        self.log.write(renderable, width=w if w >= 40 else None)
 
     def info(self, m): self._w(Text.assemble(("[*] ", "blue"), m))
     def ok(self, m): self._w(Text.assemble(("[+] ", "green"), m))
@@ -156,7 +162,7 @@ class FormScreen(ModalScreen[Optional[dict]]):
 
     def _field(self, p) -> ComposeResult:
         wid = f"f-{p.name}"
-        optional = "" if p.required and p.kind != "bool" else "  (opcional)"
+        optional = "" if (p.required and p.kind != "bool") or p.advanced else "  (opcional)"
         if p.kind == "bool":
             yield FormCheckbox(p.label, bool(p.default), id=wid)
         else:

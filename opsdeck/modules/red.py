@@ -129,5 +129,5 @@ Los puertos en escucha de este equipo están en *Sistema › Puertos en escucha*
             Action("conexiones", "Conexiones activas", conexiones),
             Action("conectividad", "Comprobar conectividad", conectividad, params=[
                 Param("destino", "Equipo (nombre o IP)", help="Ej.: srvdatos01, 192.168.0.250, google.com"),
-                Param("puerto", "Puerto TCP (opcional)", required=False, help="Ej.: 445 (SMB), 3389 (RDP), 443 (web)")]),
+                Param("puerto", "Puerto TCP", required=False, help="Ej.: 445 (SMB), 3389 (RDP), 443 (web)")]),
         ]

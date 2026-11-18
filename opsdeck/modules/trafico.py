@@ -326,7 +326,7 @@ puerto espejo (SPAN) o en el propio servidor o firewall.
         return [
             Action("capturar", "Capturar y resumir", capturar, params=[
                 iface, Param("segundos", "Duración (segundos)", "int", 60),
-                Param("filtro", "Filtro (opcional)", required=False, help="Ej.: host 192.168.0.10 and port 443"),
+                Param("filtro", "Filtro", required=False, help="Ej.: host 192.168.0.10 and port 443"),
                 *_adv()]),
             Action("analizar", "Analizar una captura", analizar, params=[
                 Param("fichero", "Fichero .pcap (vacío = última captura)", required=False)]),

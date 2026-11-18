@@ -304,7 +304,7 @@ u otros clientes RDP. Este módulo solo aparece si xrdp está instalado.
             Action("quitar", "Quitar acceso", quitar, changes=True, params=[u],
                    help="Saca al usuario del grupo de escritorio remoto."),
             Action("limitar", "Limitar el acceso a un grupo", limitar, changes=True,
-                   params=[Param("usuario", "Incluir además a (opcional)", "user", required=False)],
+                   params=[Param("usuario", "Incluir además a", "user", required=False)],
                    confirm=_limit_confirm,
                    help="Crea el grupo de acceso. Incluye a quien esté conectado y a ti para no dejar a nadie fuera."),
         ]
