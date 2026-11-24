@@ -1,7 +1,6 @@
 """Pruebas de la revisión unificada de dominio y el diagnóstico de contraseña caducada.
 
 No hay dominio real: se prueba la lógica y el parsing con las salidas de los comandos simuladas."""
-import pytest
 
 from opsdeck.modules import dominio as D
 

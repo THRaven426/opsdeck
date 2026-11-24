@@ -128,7 +128,7 @@ if [[ "$SRC" != "$DEST" ]]; then
   say "Copiando la herramienta a $DEST"
   mkdir -p "$DEST"
   # se conserva .git (para actualizar) y nunca se copian entornos ni cachés
-  tar -C "$SRC" --exclude=.venv --exclude=__pycache__ --exclude=.pytest_cache -cf - . | tar -C "$DEST" -xf -
+  tar -C "$SRC" --exclude-vcs-ignores --exclude=.venv --exclude=__pycache__ --exclude=.pytest_cache --exclude=.ruff_cache -cf - . | tar -C "$DEST" -xf -
 fi
 chown -R root:root "$DEST"
 chmod -R u=rwX,go=rX "$DEST"
@@ -144,7 +144,8 @@ cat > "$BIN" <<EOF
 #!/bin/sh
 # Lanzador de $NAME: se relanza con sudo si hace falta y usa su entorno Python aislado.
 if [ "\$(id -u)" -ne 0 ]; then exec sudo "\$0" "\$@"; fi
-PYTHONPATH="$DEST" exec "$DEST/.venv/bin/python" -m $NAME "\$@"
+# -I: aislado; ni el directorio actual ni las variables PYTHON* pueden colar código que se ejecute como root
+exec "$DEST/.venv/bin/python" -I -c 'import sys; sys.path.insert(0, "$DEST"); from $NAME.cli import main; sys.exit(main(sys.argv[1:]))' "\$@"
 EOF
 chmod 755 "$BIN"
 
