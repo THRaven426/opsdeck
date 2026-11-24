@@ -265,8 +265,11 @@ preguntar. La guía completa está en [HELP.md](HELP.md) y dentro de la herramie
 opsdeck autoactualizar
 ```
 
-Enseña los cambios, pide confirmación, descarga la versión nueva y actualiza su entorno Python.
-Conserva la configuración, los datos y los registros. Después conviene:
+Enseña los cambios, pide confirmación, descarga la versión nueva (solo desde un origen https, sin
+ejecutar hooks de git) y actualiza su entorno Python con las versiones y hashes fijados; si eso
+falla, vuelve a la versión anterior. Conserva la configuración, los datos y los registros. Si avisa
+de que el instalador ha cambiado, ejecuta `sudo /opt/opsdeck/install.sh` para aplicar el lanzador
+nuevo. Después conviene:
 
 ```bash
 opsdeck instalar todo --opcionales   # herramientas que pidan los módulos nuevos
@@ -489,13 +492,21 @@ comandos, la detección y la instalación de dependencias salen de esa definici�
 - **Capturar tráfico afecta a la privacidad** de quien usa la red: hazlo dentro del procedimiento de
   tu organización. El resumen usa metadatos y no muestra contenido ni credenciales.
 - **Trazabilidad.** Cada cambio y cada análisis queda en la auditoría con operador, objetivo y resultado.
+  El operador sale de la sesión con la que se entró (no de variables que se puedan falsear).
+- **Equivale a root.** opsdeck se ejecuta como root y administra cuentas, sudo y servicios: quien
+  pueda abrirlo administra el equipo. Concede `sudo` para opsdeck solo a administradores. La
+  herramienta impide que alguien se dé a sí mismo sudo o grupos privilegiados, y nadie puede hacer
+  que cargue código suyo (entorno limpio, sin rutas ni ficheros en las opciones adicionales, sin
+  seguir enlaces al leer ficheros de usuarios).
+- **Dependencias verificadas.** Las de Python se instalan con versión y hash fijados
+  (`requirements.txt`); los informes XML de terceros se leen con `defusedxml`.
 - **Los avisos no son veredictos.** Un hallazgo es un punto de partida para investigar.
 
 ## Desarrollo
 
 ```bash
 git clone https://github.com/THRaven426/opsdeck.git && cd opsdeck
-python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+python3 -m venv .venv && .venv/bin/pip install --require-hashes --no-deps -r requirements-dev.txt
 sudo OPSDECK_DATA=/tmp/od OPSDECK_LOG=/tmp/od OPSDECK_CONF=/tmp/od/od.conf .venv/bin/python -m pytest -q
 ```
 

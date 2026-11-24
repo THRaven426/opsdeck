@@ -81,7 +81,16 @@ def test_fichero_sudo_sin_puntos():
     assert usuarios._sudo_file("juan").name == "90-opsdeck-juan"
     f = usuarios._sudo_file("juan.perez")
     assert "." not in f.name and not f.name.endswith("~") and f.name == "90-opsdeck-juan_2eperez"
-    assert usuarios._legacy_sudo_file("juan.perez").name == "90-opsdeck-juan.perez"
+    assert usuarios._sudo_file("juan_2eperez").name == "90-opsdeck-juan_5f2eperez"   # sin colisión
+
+
+def test_nombres_reservados(monkeypatch):
+    from opsdeck.core import accounts
+    monkeypatch.setattr(accounts, "sudoers_groups", lambda: {"opsadmins"})
+    assert accounts.reserved_name("admin") and accounts.reserved_name("docker")
+    assert accounts.reserved_name("opsadmins")
+    assert not accounts.reserved_name("ana")
+    assert not accounts.valid_name("ana\n")
 
 
 def test_realm_no_recibe_opciones_como_nombre(monkeypatch):
@@ -121,3 +130,47 @@ async def test_tui_muestra_datos_con_corchetes():
         out.table(["Recurso"], [["datos [/red]"]])
         await pilot.pause()
         assert any("datos [/red]" in line.text for line in log.lines)
+
+
+def test_xml_con_entidades_se_rechaza(tmp_path):
+    from opsdeck.core import nmapxml
+    bomba = ('<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;">]>'
+             '<NessusClientData_v2><Report><ReportHost name="&b;"/></Report></NessusClientData_v2>')
+    f = tmp_path / "bomba.nessus"
+    f.write_text(bomba)
+    items, msg = informes.load(f)
+    assert not items and "XML" in msg
+    xxe = tmp_path / "xxe.xml"
+    xxe.write_text('<?xml version="1.0"?><!DOCTYPE nmaprun [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
+                   '<nmaprun><host><address addr="&x;"/></host></nmaprun>')
+    assert nmapxml.parse(xxe).hosts == []
+
+
+def test_opciones_extra_no_permiten_ficheros_ni_objetivos(monkeypatch):
+    import ipaddress as ipa
+
+    from opsdeck.modules import escaneo, nuclei
+    monkeypatch.setattr(scope, "authorized_networks", lambda: [ipa.ip_network("10.0.0.0/24")])
+    validas = ["--reason -sV --data-length 25", "--open --exclude 10.0.0.5", "--scan-delay 0.5s -S 10.0.0.7",
+               "--script ssl-enum-ciphers --script-args tls.servername=www.ejemplo.local",
+               "--script-args http.useragent=Mozilla/5.0"]
+    for ok in validas:
+        assert not tooling.extra_args(ok, escaneo.FORBIDDEN)[1], ok
+    malas = ["--script=/home/u/x.nse", "--script x.nse", "--oN=/etc/x", "-oNfichero", "-iLx /etc/shadow",
+             "--script-args-file=/etc/shadow", "--script-args userdb=/etc/shadow", "--excludefile f",
+             "--openssl=/home/u/evil", "--plugins=/home/u/p.rb", "-resume", "--resum x", "--datad d",
+             "scanme.nmap.org", "-sS 8.8.8.8", "8.8.8.*", "8.8.8.1,2", "134744072", "-sS ~/x", "--iL l"]
+    for bad in malas:
+        assert tooling.extra_args(bad, escaneo.FORBIDDEN)[1], bad
+    for bad in ("-srd /root/x", "-me d", "-t /tmp/x", "-config c", "-elog x", "-ev"):
+        assert tooling.extra_args(bad, nuclei.FORBIDDEN)[1], bad
+    assert not tooling.extra_args("-rl 50", nuclei.FORBIDDEN)[1]
+
+
+def test_resolucion_doble_pila(monkeypatch):
+    import socket
+    infos = [(socket.AF_INET6, 1, 6, "", ("2600:3c01::1", 0, 0, 0)), (socket.AF_INET, 1, 6, "", ("45.33.32.156", 0))]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: infos)
+    assert [str(a) for a in scope._resolve("dual.ejemplo")] == ["45.33.32.156", "2600:3c01::1"]
+    spans = scope._merge([ipaddress.ip_network("::/120"), ipaddress.ip_network("10.0.0.0/24")])
+    assert len(spans) == 2

@@ -138,9 +138,25 @@ def hostname() -> str:
     return socket.gethostname().split(".")[0]
 
 
+def _login_user() -> Optional[str]:
+    """Usuario con el que se inició la sesión (loginuid del kernel). No cambia con sudo ni su y el
+    usuario no lo puede fijar, a diferencia de SUDO_USER (sudo deja pasar variables con SETENV)."""
+    try:
+        uid = int(Path("/proc/self/loginuid").read_text().strip())
+    except (OSError, ValueError):
+        return None
+    if uid in (-1, 4294967295):
+        return None
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return None
+
+
 def operator() -> str:
-    """Persona que usa la herramienta (no root, si entró con sudo)."""
-    u = os.environ.get("SUDO_USER")
+    """Persona que usa la herramienta (no root, si entró con sudo). Decide quién accede a la edición
+    completa y figura en la auditoría."""
+    u = _login_user() or os.environ.get("SUDO_USER")
     if u:
         return u
     try:

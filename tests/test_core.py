@@ -1,5 +1,6 @@
 """Pruebas del núcleo."""
 import subprocess
+import os
 
 import pytest
 
@@ -200,6 +201,7 @@ def test_revision_no_falla_y_ids_estables():
     assert all(i["nivel"] in ("ALTO", "MEDIO", "BAJO") for i in a.items)
 
 
+@pytest.mark.skipif(os.geteuid() != 0, reason="escribe en /etc/cron.d: requiere root")
 def test_triaje_persistencia_detecta_cron_sospechoso(tmp_path, monkeypatch):
     from pathlib import Path as P
     from opsdeck.modules import triaje

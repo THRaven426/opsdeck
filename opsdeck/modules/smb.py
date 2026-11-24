@@ -237,18 +237,12 @@ def enum4linux(ctx: Context, v: dict) -> bool:
     if not scope.gate(ctx, host, v, "enum4linux") or not _targets(ctx, host) or " " in host:
         return False
     d = results.new_dir("smb", f"enum4linux_{host}")
-    args = ["enum4linux-ng", "-A" if not v.get("rapido") else "-As", "-oJ", str(d / "enum4linux")]
-    user = (v.get("usuario") or "").strip()
-    env = None
-    if user:
-        args += ["-u", user]
-        if v.get("password"):
-            ctx.out.warn("enum4linux-ng recibe la contraseña como argumento (visible en la lista de procesos "
-                         "mientras dura). Para evitarlo usa «Recursos compartidos» o netexec.")
-            args += ["-p", v["password"]]
-    args.append(host)
-    tooling.show_cmd(ctx, args, hide={args.index("-p") + 1} if "-p" in args else None)
-    rc, _ = stream(ctx, args, accion="enum4linux", objetivo=host, save_to=d / "enum4linux.txt", keep=200, env=env)
+    # Solo sesión anónima: con cuenta, enum4linux-ng pone la contraseña en su línea de comandos y en la
+    # de smbclient/rpcclient, la imprime y la guarda en el JSON. Con cuenta se usa netexec.
+    args = ["enum4linux-ng", "-A" if not v.get("rapido") else "-As", "-oJ", str(d / "enum4linux"), host]
+    tooling.show_cmd(ctx, args)
+    rc, _ = stream(ctx, args, accion="enum4linux", objetivo=host, save_to=d / "enum4linux.txt", keep=200)
+    ctx.out.info("Para enumerar con una cuenta usa «netexec»: recibe la contraseña en un fichero protegido.")
     ctx.out.info(f"Resultado (también en JSON) en {d}")
     return rc == 0
 
@@ -283,7 +277,9 @@ class Smb(Module):
   **lista de equipos sin firma SMB**. No se permiten ejecución remota, volcados de credenciales ni
   fuerza bruta.
 - **Enumeración completa (enum4linux-ng)**: si está instalado, todo lo que un equipo Windows/Samba
-  cuenta por SMB y RPC (dominio, usuarios, grupos, recursos, política) con o sin cuenta.
+  cuenta por SMB y RPC (dominio, usuarios, grupos, recursos, política) **sin cuenta** (sesión
+  anónima). Con cuenta usa *netexec*: enum4linux-ng expone la contraseña en la lista de procesos, en
+  pantalla y en su informe JSON.
 
 **Opciones avanzadas de «Seguridad SMB»**: comprobar también MS17-010, MS08-067, SambaCry y
 DoublePulsar (scripts de solo comprobación), puertos, velocidad, scripts y opciones de nmap.
@@ -321,6 +317,5 @@ DoublePulsar (scripts de solo comprobación), puertos, velocidad, scripts y opci
                                   "(un fallo repetido puede bloquear la cuenta)" if v.get("usuario") else ""),
             Action("enum4linux", "Enumeración completa (enum4linux-ng)", enum4linux, requires=[cmd("enum4linux-ng")],
                    params=[Param("equipo", "Equipo (IP o nombre)"), scope.ok_param(),
-                           Param("usuario", "Cuenta", **A), Param("password", "Contraseña", "password", **A),
                            Param("rapido", "Sin consultas lentas (-As)", "bool", False, **A)]),
         ]

@@ -2,7 +2,9 @@
 la higiene del directorio (cuentas inactivas, privilegiadas, contraseñas que no caducan, kerberoasting...).
 
 La contraseña de la cuenta de consulta no se guarda: se pasa a ldapsearch en un fichero temporal
-legible solo por root que se borra al terminar. Por defecto se usa LDAPS (cifrado)."""
+legible solo por root que se borra al terminar. Por defecto se usa LDAPS y se verifica el certificado
+del controlador: sin esa verificación, cualquiera en el camino de red podría hacerse pasar por él y
+recibir la contraseña."""
 
 from __future__ import annotations
 
@@ -14,7 +16,9 @@ import tempfile
 import time
 from typing import Optional
 
-from ..core import audit, paths, results, system
+from pathlib import Path
+
+from ..core import audit, paths, results, scope, system
 from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.config import settings
 
@@ -24,6 +28,7 @@ UAC = {"DESACTIVADA": 2, "SIN_PASSWORD_REQUERIDA": 32, "PASSWORD_NO_CADUCA": 655
        "DELEGACION_SIN_RESTRICCION": 524288, "SIN_PREAUTENTICACION_KERBEROS": 4194304}
 ENABLED = f"(!(userAccountControl:{BIT_AND}:={UAC['DESACTIVADA']}))"
 PERSON = "(&(objectCategory=person)(objectClass=user))"
+SERVER_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?(:\d{1,5})?$|^\[[0-9A-Fa-f:.]+\](:\d{1,5})?$")
 USER_ATTRS = ["sAMAccountName", "displayName", "mail", "title", "department", "userAccountControl",
               "lastLogonTimestamp", "pwdLastSet", "whenCreated", "memberOf", "description"]
 
@@ -112,12 +117,19 @@ class Conn:
         self.user = (v.get("usuario") or cfg.get("ldap", "usuario", fallback="")).strip()
         self.password = v.get("password", "")
         self.mode = v.get("cifrado") or cfg.get("ldap", "cifrado", fallback="ldaps")
+        self.verify = not v.get("sin_verificar") and cfg.get("ldap", "verificar_certificado",
+                                                               fallback="yes").strip().lower() not in ("no", "false", "0")
+        self.ca = (v.get("ca") or cfg.get("ldap", "ca", fallback="")).strip()
         if not self.base and "@" in self.user:
             self.base = base_from_domain(self.user.split("@", 1)[1])
 
     def problem(self) -> str:
         if not self.server:
             return "Falta el servidor (un controlador de dominio)"
+        if not SERVER_RE.fullmatch(self.server):
+            return "Servidor no válido: escribe solo el nombre o la IP (y, si hace falta, :puerto)"
+        if self.ca and not Path(self.ca).is_file():
+            return f"No existe el certificado de la autoridad (CA): {self.ca}"
         if not self.base:
             return "Falta la base de búsqueda (p. ej. DC=empresa,DC=local) o usa usuario@dominio"
         if not self.user or not self.password:
@@ -135,7 +147,9 @@ class Conn:
                     "-s", scope, "-o", "ldif-wrap=no", "-o", "nettimeout=15", "-E", "pr=500/noprompt", flt, *attrs]
             if self.mode == "starttls":
                 args.insert(2, "-ZZ")
-            env = {"LDAPTLS_REQCERT": "allow"} if settings().get("ldap", "verificar_certificado", fallback="no") == "no" else None
+            env = {"LDAPTLS_REQCERT": "demand" if self.verify else "allow"}
+            if self.ca:
+                env["LDAPTLS_CACERT"] = self.ca
             r = system.run(args, timeout=120, env=env)
         finally:
             try:
@@ -162,6 +176,10 @@ def explain(err: str) -> str:
         return "no se puede conectar con el servidor (nombre, red, firewall o puerto 636/389)"
     if "Strong(er) authentication required" in err or "Transport encryption required" in err:
         return "el servidor exige cifrado: usa LDAPS o StartTLS"
+    if re.search(r"certificate|TLS: hostname does not match|unknown CA|self.signed", err, re.I):
+        return ("no se pudo verificar el certificado del controlador. Indica el certificado de la CA del "
+                "dominio en «Certificado de la CA», usa el nombre que aparece en el certificado (no la IP) o, "
+                "solo en un laboratorio, marca «No verificar el certificado»")
     return err.strip()
 
 
@@ -171,6 +189,14 @@ def _conn(ctx, v) -> Optional[Conn]:
     if p:
         ctx.out.error(p)
         return None
+    if not scope.gate(ctx, scope.host_of(c.server), v, "ldap"):
+        return None
+    if c.mode == "plano":
+        ctx.out.warn("Conexión SIN CIFRAR: la contraseña de la cuenta de consulta viaja en claro por la red.")
+    elif not c.verify:
+        ctx.out.warn("No se verifica el certificado del controlador: alguien en la red podría suplantarlo y "
+                     "quedarse con la contraseña. Úsalo solo en un laboratorio.")
+        audit.record("ldap_sin_verificar_certificado", c.server, "AVISO", f"cifrado={c.mode}")
     return c
 
 
@@ -270,10 +296,10 @@ def exportar(ctx: Context, v: dict) -> bool:
                     "password_cambiada", "creada", "grupos"])
         for e in res:
             uac = int(first(e, "userAccountControl", "0") or 0)
-            w.writerow([first(e, "sAMAccountName"), first(e, "displayName"), first(e, "mail"), first(e, "title"),
+            w.writerow(results.csv_safe([first(e, "sAMAccountName"), first(e, "displayName"), first(e, "mail"), first(e, "title"),
                         first(e, "department"), "no" if uac & 2 else "si", filetime_to_date(first(e, "lastLogonTimestamp")),
                         filetime_to_date(first(e, "pwdLastSet")), first(e, "whenCreated")[:8],
-                        ",".join(cn(g) for g in e.get("memberOf", []))])
+                        ",".join(cn(g) for g in e.get("memberOf", []))]))
     os.chmod(dest, 0o640)
     audit.record("ldap_exportar_usuarios", c.server, "OK", f"{len(res)} usuarios -> {dest}")
     ctx.out.ok(f"{len(res)} usuarios exportados a {dest}")
@@ -378,9 +404,17 @@ def guardar(ctx: Context, v: dict) -> bool:
     cfg = settings()
     if not cfg.has_section("ldap"):
         cfg.add_section("ldap")
-    for k in ("servidor", "base", "usuario", "cifrado"):
-        if v.get(k):
-            cfg.set("ldap", k, v[k])
+    for k in ("servidor", "base", "usuario", "cifrado", "ca"):
+        val = (v.get(k) or "").strip()
+        if not val:
+            continue
+        if any(ch in val for ch in "\r\n"):
+            ctx.out.error(f"Valor no válido en {k}")
+            return False
+        if k == "servidor" and not SERVER_RE.fullmatch(val):
+            ctx.out.error("Servidor no válido")
+            return False
+        cfg.set("ldap", k, val)
     save()
     ctx.out.ok("Conexión guardada (sin contraseña). Se propondrá por defecto en las demás acciones.")
     return True
@@ -426,8 +460,13 @@ repetir los datos: se guardan servidor, base y cuenta, **nunca la contraseña**.
   - contraseñas que no caducan o no requeridas; cuentas y equipos inactivos;
   - equipos con sistemas sin soporte y con delegación sin restricciones.
 
-**Cifrado**: *ldaps* (puerto 636) por defecto. Si el controlador no tiene certificado, prueba *starttls*.
-*sin cifrar* envía la contraseña en claro por la red: evítalo.
+**Cifrado**: *ldaps* (puerto 636) por defecto, y **se verifica el certificado** del controlador. Si
+el certificado lo emite la CA interna del dominio, indica su fichero en *Certificado de la CA* (o
+instálalo en el sistema) y usa el nombre del controlador, no su IP. *No verificar el certificado*
+existe solo para laboratorios: cualquiera en la red podría suplantar al controlador y quedarse con la
+contraseña. *sin cifrar* envía la contraseña en claro: evítalo.
+
+El controlador debe estar dentro del **alcance autorizado** (como el resto de acciones de red).
 """
 
     def actions(self):
@@ -440,6 +479,11 @@ repetir los datos: se guardan servidor, base y cuenta, **nunca la contraseña**.
                   help="Se deduce de usuario@dominio. Ej.: DC=empresa,DC=local"),
             Param("cifrado", "Cifrado", "choice", _default("cifrado", "ldaps")(), choices=[
                 ("ldaps", "LDAPS (recomendado)"), ("starttls", "StartTLS"), ("plano", "Sin cifrar (no recomendado)")]),
+            Param("ca", "Certificado de la CA del dominio (fichero PEM)", default=_default("ca")(), required=False,
+                  advanced=True, help="Si el certificado del controlador lo emite una CA interna."),
+            Param("sin_verificar", "No verificar el certificado (solo laboratorio)", "bool", False, required=False,
+                  advanced=True, help="Acepta cualquier certificado: la contraseña podría acabar en manos de un impostor."),
+            scope.ok_param(),
         ]
         return [
             Action("probar", "Probar conexión", probar, params=conn),
@@ -449,6 +493,6 @@ repetir los datos: se guardan servidor, base y cuenta, **nunca la contraseña**.
             Action("revision", "Revisión del Active Directory", revision, params=[
                 Param("dias", "Días sin uso para considerar inactiva", "int", 90, required=False), *conn],
                 help="Busca los problemas de seguridad más comunes del dominio y guarda un informe."),
-            Action("guardar", "Guardar conexión", guardar, changes=True, params=[p for p in conn if p.name != "password"],
+            Action("guardar", "Guardar conexión", guardar, changes=True, params=[p for p in conn if p.name not in ("password", "sin_verificar", scope.PARAM_OK)],
                    help="Guarda servidor, cuenta, base y cifrado para no repetirlos. Nunca la contraseña."),
         ]

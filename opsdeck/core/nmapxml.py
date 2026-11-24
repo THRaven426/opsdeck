@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+from . import xmlsafe
 
 
 @dataclass
@@ -84,8 +85,8 @@ class Scan:
 def parse(path: Path) -> Scan:
     scan = Scan(path)
     try:
-        root = ET.parse(path).getroot()
-    except (ET.ParseError, OSError):
+        root = xmlsafe.parse_file(path)
+    except (*xmlsafe.ERRORS, OSError):
         return scan
     scan.args = root.get("args", "")
     scan.start = root.get("startstr", "")

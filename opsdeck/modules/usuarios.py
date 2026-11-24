@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import stat
 import tarfile
 import tempfile
@@ -11,7 +12,7 @@ import time
 from pathlib import Path
 
 from ..core import accounts as acc
-from ..core import audit, paths, system
+from ..core import audit, edition, paths, results, system
 from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.config import settings
 from ..core.ops import apply
@@ -103,14 +104,22 @@ def quien_sudo(ctx: Context, v: dict) -> bool:
     ctx.out.title("Usuarios con sudo")
     ctx.out.table(["Usuario", "Sudo", "Estado"], rows)
     ctx.out.title("Reglas activas en sudoers")
+    ignored = []
     for f in [Path("/etc/sudoers"), *sorted(Path("/etc/sudoers.d").glob("*"))]:
+        if f.parent.name == "sudoers.d" and ("." in f.name or f.name.endswith("~")):
+            ignored.append(f.name)              # sudo no lee estos ficheros
+            continue
         try:
             for line in f.read_text().splitlines():
                 t = line.strip()
-                if t and not t.startswith("#") and not t.startswith("Defaults"):
+                if t.startswith(("#include", "@include")):
+                    ctx.out.line(f"  {f}: {t}  (incluye otro fichero)")
+                elif t and not t.startswith("#") and not t.startswith("Defaults"):
                     ctx.out.line(f"  {f}: {t}")
         except OSError:
             continue
+    if ignored:
+        ctx.out.info("sudo ignora (por tener un punto o acabar en ~): " + ", ".join(ignored))
     return True
 
 
@@ -198,6 +207,11 @@ def crear(ctx: Context, v: dict) -> bool:
         return _err(ctx, "Nombre no válido: minúsculas, números, _ y -; empieza por letra o _; máx. 32")
     if acc.user(name):
         return _err(ctx, f"Ya existe '{name}'")
+    if acc.group(name):
+        return _err(ctx, f"Ya existe un grupo '{name}': useradd fallaría o la cuenta heredaría sus permisos")
+    why = acc.reserved_name(name)
+    if why:
+        return _err(ctx, why)
     if not acc.valid_shell(shell):
         return _err(ctx, f"La shell '{shell}' no está en /etc/shells")
     args = ["useradd", "-m", "-s", shell]
@@ -260,6 +274,17 @@ def desbloquear(ctx: Context, v: dict) -> bool:
     return True
 
 
+def _du_bytes(path: Path) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path, followlinks=False):
+        for f in files:
+            try:
+                total += os.lstat(os.path.join(root, f)).st_blocks * 512
+            except OSError:
+                pass
+    return total
+
+
 def _kill(ctx, name) -> None:
     if system.has_cmd("loginctl") and system.systemd_available():
         apply(ctx, "cerrar_sesiones", name, ["loginctl", "terminate-user", name], quiet=True)
@@ -287,9 +312,21 @@ def eliminar(ctx: Context, v: dict) -> bool:
         return _err(ctx, "La confirmación no coincide con el nombre del usuario. No se ha borrado nada.")
     home = Path(acc.user(name).pw_dir)
     copy = ""
+    # Primero se bloquea la cuenta y se cierran sus procesos: así nada suyo puede cambiar ficheros
+    # del home (p. ej. por un enlace a /etc/shadow) mientras root hace la copia.
+    apply(ctx, "bloquear_usuario", name, ["usermod", "-L", "-e", "1", name], "previo a eliminar", quiet=True)
+    if system.has_cmd("crontab"):
+        system.run(["crontab", "-r", "-u", name])
+    if acc.process_count(name):
+        _kill(ctx, name)
     if v.get("copia") and home.is_dir():
         paths.ensure_private_dir(paths.DATA_DIR, 0o750)
         paths.ensure_private_dir(paths.BACKUP_DIR)
+        need = _du_bytes(home)
+        free = shutil.disk_usage(paths.BACKUP_DIR).free
+        if need > free * 0.9:
+            return _err(ctx, f"No hay espacio para copiar el home ({need >> 20} MB, libres {free >> 20} MB). "
+                             f"No se ha borrado nada; {name} queda bloqueado.")
         dest = paths.BACKUP_DIR / f"home_{name}_{time.strftime('%Y%m%d_%H%M%S')}.tar.gz"
         try:
             with tarfile.open(dest, "w:gz") as tar:
@@ -298,12 +335,8 @@ def eliminar(ctx: Context, v: dict) -> bool:
             copy = str(dest)
             ctx.out.ok(f"Copia del home: {dest}")
         except OSError as e:
-            return _err(ctx, f"Falló la copia del home ({e}). No se ha borrado nada.")
-    if acc.process_count(name):
-        _kill(ctx, name)
-    if system.has_cmd("crontab"):
-        system.run(["crontab", "-r", "-u", name])
-    for f in {_sudo_file(name), _legacy_sudo_file(name)}:
+            return _err(ctx, f"Falló la copia del home ({e}). No se ha borrado nada; {name} queda bloqueado.")
+    for f in [_sudo_file(name), *_old_sudo_files(name)]:
         f.unlink(missing_ok=True)
     if not apply(ctx, "eliminar_usuario", name, ["userdel", "-r", name], f"copia_home={copy or 'ninguna'}"):
         return False
@@ -315,8 +348,10 @@ def eliminar(ctx: Context, v: dict) -> bool:
 
 def grupo_add(ctx: Context, v: dict) -> bool:
     name, g = v["usuario"], v["grupo"]
-    if not acc.user(name):
-        return _err(ctx, f"No existe el usuario '{name}'")
+    # nadie se da a sí mismo un grupo privilegiado ni el acceso a la edición completa
+    critical = g in acc.priv_groups() or g == acc.admin_group() or g == edition.group()
+    if not _guard(ctx, name, allow_self=not critical):
+        return False
     if not acc.group(g):
         return _err(ctx, f"No existe el grupo '{g}'")
     if acc.is_member(name, g):
@@ -332,8 +367,11 @@ def grupo_add(ctx: Context, v: dict) -> bool:
 
 def grupo_del(ctx: Context, v: dict) -> bool:
     name, g = v["usuario"], v["grupo"]
-    if not acc.user(name) or not acc.group(g):
-        return _err(ctx, "El usuario o el grupo no existen")
+    if not acc.group(g):
+        return _err(ctx, f"No existe el grupo '{g}'")
+    critical = g in acc.priv_groups() or g == acc.admin_group()
+    if not _guard(ctx, name, allow_self=not critical):
+        return False
     if acc.primary_group(name) == g:
         return _err(ctx, f"{g} es el grupo principal de {name}; no se puede quitar")
     if not acc.is_member(name, g):
@@ -351,6 +389,9 @@ def grupo_crear(ctx: Context, v: dict) -> bool:
         return _err(ctx, "Nombre de grupo no válido")
     if acc.group(g):
         return _err(ctx, f"Ya existe '{g}'")
+    why = acc.reserved_name(g)
+    if why:
+        return _err(ctx, why)
     return apply(ctx, "crear_grupo", g, ["groupadd", g]) and (ctx.out.ok(f"Grupo {g} creado") or True)
 
 
@@ -369,19 +410,32 @@ def grupo_eliminar(ctx: Context, v: dict) -> bool:
 
 def _sudo_file(name: str) -> Path:
     """Fichero de la regla en sudoers.d. sudo ignora los ficheros cuyo nombre contiene un punto
-    (o acaba en ~), así que los caracteres fuera de [A-Za-z0-9_-] se codifican (juan.perez -> juan_2eperez)."""
-    safe = re.sub(r"[^A-Za-z0-9_-]", lambda m: f"_{ord(m.group()):02x}", name)
+    (o acaba en ~), así que todo lo que no sea [A-Za-z0-9-] se codifica, también «_», para que dos
+    usuarios nunca compartan fichero (juan.perez -> juan_2eperez, juan_2eperez -> juan_5f2eperez)."""
+    safe = re.sub(r"[^A-Za-z0-9-]", lambda m: f"_{ord(m.group()):02x}", name)
     return Path(f"/etc/sudoers.d/90-opsdeck-{safe}")
 
 
-def _legacy_sudo_file(name: str) -> Path:
-    """Nombre usado hasta 2.4.1 (sin codificar). Con un punto, sudo nunca lo leyó; se limpia al retirar."""
-    return Path(f"/etc/sudoers.d/90-opsdeck-{name}")
+def _old_sudo_files(name: str) -> list[Path]:
+    """Nombres de versiones anteriores (sin codificar y con «_» sin codificar). Podían coincidir entre
+    usuarios, así que solo se consideran suyos si la regla que contienen es de ese usuario."""
+    prev = re.sub(r"[^A-Za-z0-9_-]", lambda m: f"_{ord(m.group()):02x}", name)
+    out = []
+    for f in {Path(f"/etc/sudoers.d/90-opsdeck-{name}"), Path(f"/etc/sudoers.d/90-opsdeck-{prev}")}:
+        if f == _sudo_file(name) or not f.is_file():
+            continue
+        try:
+            rules = [l for l in f.read_text(errors="replace").splitlines() if l.strip() and not l.startswith("#")]
+        except OSError:
+            continue
+        if rules and all(l.split()[0] == name for l in rules):
+            out.append(f)
+    return out
 
 
 def sudo_dar(ctx: Context, v: dict) -> bool:
     name, mode = v["usuario"], v["modo"]
-    if not _guard(ctx, name):
+    if not _guard(ctx, name, allow_self=False):     # nadie se concede sudo a sí mismo
         return False
     if acc.sudo_summary(name) != "no" and mode == "grupo":
         ctx.out.info(f"{name} ya tiene sudo:")
@@ -420,7 +474,7 @@ def sudo_quitar(ctx: Context, v: dict) -> bool:
     g = acc.admin_group()
     if g and acc.is_member(name, g):
         apply(ctx, "revocar_sudo", name, ["gpasswd", "-d", name, g], f"via=grupo:{g}", quiet=True)
-    for f in sorted({_sudo_file(name), _legacy_sudo_file(name)}):
+    for f in [_sudo_file(name), *_old_sudo_files(name)]:
         if f.exists():
             apply(ctx, "revocar_sudo", name, ["rm", "-f", str(f)], f"via={f}")
     if acc.sudo_summary(name) == "no":
@@ -505,12 +559,23 @@ def _read_keys(u) -> str:
         os.close(d)
 
 
-def _key_lines(name: str) -> list[str]:
+def _key_state(name: str) -> tuple[list[str], str]:
+    """(claves, problema). Si authorized_keys no se puede leer de forma segura se dice, en vez de
+    aparentar que no hay claves: sshd sí seguiría el enlace."""
     try:
         text = _read_keys(acc.user(name))
-    except (_UnsafeSSH, OSError):
-        return []
-    return [l for l in text.splitlines() if l.strip() and not l.lstrip().startswith("#")]
+    except (_UnsafeSSH, OSError) as e:
+        return [], str(e) or "no se puede leer authorized_keys"
+    return [l for l in text.splitlines() if l.strip() and not l.lstrip().startswith("#")], ""
+
+
+def _key_lines(name: str) -> list[str]:
+    return _key_state(name)[0]
+
+
+def _keys_count(name: str) -> str:
+    lines, problem = _key_state(name)
+    return "?" if problem else str(len(lines))
 
 
 def _append_key(u, key: str) -> None:
@@ -565,7 +630,10 @@ def ssh_listar(ctx: Context, v: dict) -> bool:
     name = v["usuario"]
     if not acc.user(name):
         return _err(ctx, f"No existe '{name}'")
-    lines = _key_lines(name)
+    lines, problem = _key_state(name)
+    if problem:
+        ctx.out.warn(f"No se pueden revisar las claves de {name} de forma segura: {problem}")
+        return False
     if not lines:
         ctx.out.info(f"{name} no tiene claves SSH autorizadas.")
         return True
@@ -665,10 +733,10 @@ def inventario(ctx: Context, v: dict) -> bool:
                     "ultimo_cambio_password", "dias_validez", "caduca_cuenta", "sudo", "claves_ssh", "ultimo_login"])
         for u in acc.local_users(include_system=v.get("todos", False)):
             s = acc.shadow(u.pw_name) or [""] * 9
-            w.writerow([system.hostname(), u.pw_name, u.pw_uid, u.pw_gecos, acc.primary_group(u.pw_name),
+            w.writerow(results.csv_safe([system.hostname(), u.pw_name, u.pw_uid, u.pw_gecos, acc.primary_group(u.pw_name),
                         ",".join(acc.groups_of(u.pw_name)), u.pw_shell, u.pw_dir, acc.state(u.pw_name),
                         "forzado" if s[2] == "0" else acc.day2date(s[2]), s[4] or "-", acc.day2date(s[7]),
-                        acc.sudo_summary(u.pw_name), len(_key_lines(u.pw_name)), acc.last_login(u.pw_name)])
+                        acc.sudo_summary(u.pw_name), _keys_count(u.pw_name), acc.last_login(u.pw_name)]))
             count += 1
     os.chmod(dest, 0o640)
     audit.record("exportar_inventario", system.hostname(), "OK", str(dest))

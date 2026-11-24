@@ -3,7 +3,13 @@ import ipaddress
 
 import pytest
 
-from opsdeck.core import scope
+from opsdeck.core import scope, system
+
+
+@pytest.fixture(autouse=True)
+def operador_root(monkeypatch):
+    """Las listas de prueba son de root (quien ejecuta la suite), no de quien usara sudo."""
+    monkeypatch.setattr(system, "operator", lambda: "root")
 
 
 def nets(*cidrs):

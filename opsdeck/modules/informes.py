@@ -223,7 +223,7 @@ def verificar(ctx: Context, v: dict) -> bool:
         for host, port in eps:
             for scheme in ("https", "http"):
                 url = f"{scheme}://{host}:{port}"
-                if request(url, limit=1000, timeout=5).get("error"):
+                if request(url, follow=False, limit=1000, timeout=5).get("error"):
                     continue
                 r = check_url(url, deep=True) if c == "web" else {"http": {}, "hallazgos": [
                     (sv, f"{w}: /{pth}") for pth, _, sv, w in sensitive_files(url)]}
@@ -267,7 +267,7 @@ def verificar(ctx: Context, v: dict) -> bool:
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
     w.writerow(["estado", "severidad", "equipo", "puerto", "hallazgo", "comprobacion"])
-    w.writerows(out_csv)
+    w.writerows(results.csv_safe(r) for r in out_csv)
     results.write(vd / "verificacion.csv", buf.getvalue())
     results.write(vd / "hallazgos_opsdeck.json", recomendacion.to_json(findings))
     ctx.out.info("NO REPRODUCIDO = opsdeck no lo ve ahora (probablemente corregido; confírmalo en el siguiente "

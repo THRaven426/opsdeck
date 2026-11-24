@@ -1,0 +1,4 @@
+# uv pip compile --universal --python-version 3.10 --generate-hashes requirements-dev.in -o requirements-dev.txt
+-r requirements.in
+pytest
+pytest-asyncio

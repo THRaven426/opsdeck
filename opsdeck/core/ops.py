@@ -88,8 +88,11 @@ def execute(module: Module, action: Action, values: dict, ctx: Context) -> bool:
     if action.changes and not system.is_root():
         ctx.out.error("Esta acción necesita root. Abre la herramienta con sudo.")
         return False
-    if action.changes:
-        audit.snapshot_accounts()
+    if action.changes and audit.snapshot_accounts() == "ERROR":
+        ctx.out.error("No se pudo hacer la copia previa de las cuentas (¿disco lleno?): no se aplica el cambio. "
+                      "Libera espacio o desactiva [copias] cuentas en la configuración.")
+        audit.record(f"{module.id}.{action.id}", "-", "CANCELADO", "sin copia previa de cuentas")
+        return False
     try:
         return bool(action.run(ctx, values))
     except Exception as e:  # una acción con fallo no debe tumbar la herramienta
