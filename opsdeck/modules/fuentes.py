@@ -77,7 +77,7 @@ diario. Aquí ves cuándo se actualizaron por última vez y puedes ponerlas al d
     def actions(self):
         return [
             Action("estado", "Estado de las fuentes", estado),
-            Action("actualizar", "Actualizar fuentes", actualizar, changes=False,
+            Action("actualizar", "Actualizar fuentes", actualizar, changes=True,
                    help="Actualiza plantillas de nuclei, exploit-db y listas de paquetes (lo que esté instalado).",
                    confirm="Se descargarán las últimas plantillas, exploits y listas de paquetes. ¿Continuar?"),
         ]

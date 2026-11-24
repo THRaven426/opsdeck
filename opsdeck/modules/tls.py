@@ -10,16 +10,17 @@ Motor: nmap (siempre) y, si está instalado, sslscan para la renegociación y la
 
 from __future__ import annotations
 
+import csv
+import io
 import re
 import socket
 import ssl
-import xml.etree.ElementTree as ET
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from ..core import audit, nmapxml, recomendacion, results, scope, system, tooling
+from ..core import audit, nmapxml, recomendacion, results, scope, system, tooling, xmlsafe
 from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.ops import stream
 from ..core.recomendacion import Finding
@@ -186,8 +187,8 @@ def sslscan_extra(host: str, port: int) -> list[Finding]:
                     "--no-heartbleed", f"{host}:{port}"], c_locale=True, timeout=120)
     out = []
     try:
-        root = ET.fromstring(r.out[r.out.find("<?xml"):] if "<?xml" in r.out else r.out)
-    except ET.ParseError:
+        root = xmlsafe.fromstring(r.out[r.out.find("<?xml"):] if "<?xml" in r.out else r.out)
+    except xmlsafe.ERRORS:
         return []
     obj = f"{host}:{port}"
     for ren in root.iter("renegotiation"):
@@ -208,9 +209,10 @@ def sslscan_extra(host: str, port: int) -> list[Finding]:
 def _split_targets(text: str) -> tuple[dict, list[str]]:
     """«host», «host:puerto», URL, red o fichero -> ({host: {puertos}}, errores)."""
     items = text.split()
-    if len(items) == 1 and Path(items[0]).is_file():
-        items = [l.strip() for l in Path(items[0]).read_text(errors="replace").splitlines()
-                 if l.strip() and not l.startswith("#")]
+    if scope.is_target_file(text):
+        items, problem = scope.read_target_file(text.strip())
+        if problem:
+            return {}, [problem]
     out: dict = defaultdict(set)
     bad = []
     for it in items:
@@ -386,7 +388,11 @@ def caducidad(ctx: Context, v: dict) -> bool:
     rows.sort(key=lambda r: r[4])
     ctx.out.table(["Servicio", "Certificado (CN)", "Emisor", "Caduca", "Días"],
                   [[*r[:4], ("¡CADUCADO! " if r[4] < 0 else "⚠ " if r[4] < days else "") + str(r[4])] for r in rows])
-    results.write(d / "certificados.csv", "servicio;cn;emisor;caduca;dias\n" + "\n".join(";".join(map(str, r)) for r in rows) + "\n")
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["servicio", "cn", "emisor", "caduca", "dias"])
+    w.writerows(results.csv_safe(r) for r in rows)
+    results.write(d / "certificados.csv", buf.getvalue())
     ctx.out.info(f"Inventario en {d / 'certificados.csv'}")
     return True
 

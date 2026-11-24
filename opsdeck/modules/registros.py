@@ -67,8 +67,11 @@ def classic_lines() -> list[str]:
 
 
 def _messages(since_key: str) -> list[tuple[str, str]]:
+    """Mensajes de autenticación. Del journal solo los de procesos de root (_UID lo pone journald, el
+    proceso no lo elige): cualquier usuario puede escribir con «logger» un «Failed password ... from»
+    falso, pero no como root."""
     if system.has_cmd("journalctl"):
-        return [(stamp(e), e["MESSAGE"]) for e in journal(SINCE[since_key])]
+        return [(stamp(e), e["MESSAGE"]) for e in journal(SINCE[since_key], ["_UID=0"])]
     return [(l[:15], l) for l in classic_lines()]
 
 
@@ -157,7 +160,7 @@ def correctos(ctx: Context, v: dict) -> bool:
 def sudo_uso(ctx: Context, v: dict) -> bool:
     rows = []
     if system.has_cmd("journalctl"):
-        for e in journal(SINCE[v["periodo"]], ["_COMM=sudo"]):
+        for e in journal(SINCE[v["periodo"]], ["_COMM=sudo", "_UID=0"]):
             m = SUDO.search(e["MESSAGE"])
             if m:
                 rows.append([stamp(e), m.group("user"), m.group("as"), m.group("cmd")[:100]])

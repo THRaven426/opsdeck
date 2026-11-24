@@ -1,0 +1,4 @@
+# Dependencias directas. requirements.txt se genera a partir de este fichero con versiones y hashes:
+#   uv pip compile --universal --python-version 3.10 --generate-hashes requirements.in -o requirements.txt
+textual==8.2.8
+defusedxml==0.7.1

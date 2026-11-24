@@ -5,11 +5,13 @@ señales de suplantación ARP). No extrae contenido ni credenciales de los paque
 
 from __future__ import annotations
 
+import os
+import pwd
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from ..core import audit, recomendacion, results, system, tooling
+from ..core import audit, recomendacion, results, safeio, system, tooling
 from ..core.catalog import Action, Context, Module, Param, any_cmd, cmd
 from ..core.ops import stream
 
@@ -124,17 +126,38 @@ def _capture(ctx, iface: str, secs: int, flt: str, pcap: Path, label: str, v: di
     if flt:
         args += ["--", flt]                # un filtro que empiece por «-» no debe leerse como opción (-z, -w)
     ctx.out.info(f"Capturando en {iface} durante {secs} s (s = detener)...")
-    rc, _ = stream(ctx, args, accion=f"trafico_{label}", objetivo=iface, detalle=f"segundos={secs} filtro={flt or '-'}",
-                   keep=6, ok_rc=(0, 124))
-    if v.get("rotar_mb") and not pcap.exists():
-        parts = sorted(pcap.parent.glob(pcap.name + "*"))
-        if parts:
-            parts[0].rename(pcap)
+    # tcpdump deja de ser root (usuario «tcpdump») antes de escribir: mientras captura, la carpeta de
+    # esta sesión es suya; después vuelve a ser solo de root.
+    drop = _tcpdump_user()
+    if drop:
+        os.chown(pcap.parent, drop.pw_uid, 0)
+        os.chmod(pcap.parent, 0o700)
+    try:
+        rc, _ = stream(ctx, args, accion=f"trafico_{label}", objetivo=iface,
+                       detalle=f"segundos={secs} filtro={flt or '-'}", keep=6, ok_rc=(0, 124))
+    finally:
+        if drop:
+            os.chown(pcap.parent, 0, 0)
+            os.chmod(pcap.parent, 0o750)
+    parts = sorted(p for p in pcap.parent.glob(pcap.name + "*") if not p.is_symlink())
+    for p in parts:
+        os.chown(p, 0, 0)
+        p.chmod(0o600)
+    if v.get("rotar_mb") and not pcap.exists() and parts:
+        parts[0].rename(pcap)
+        if len(parts) > 1:
+            ctx.out.info(f"La captura está partida en {len(parts)} ficheros en {pcap.parent}; se analiza el primero.")
     if not pcap.exists() or pcap.stat().st_size <= 24:
         ctx.out.warn("No se capturó ningún paquete (revisa la interfaz y el filtro).")
         return False
-    pcap.chmod(0o600)
     return True
+
+
+def _tcpdump_user():
+    try:
+        return pwd.getpwnam("tcpdump")
+    except KeyError:
+        return None
 
 
 def capturar(ctx: Context, v: dict) -> bool:
@@ -166,10 +189,11 @@ def analizar(ctx: Context, v: dict) -> bool:
         pcap = caps[0]
     else:
         pcap = Path(p)
-    if not pcap.is_file():
-        ctx.out.error(f"No existe {pcap}")
+    try:
+        head = safeio.read_bytes(pcap, 4)
+    except OSError as e:
+        ctx.out.error(f"No se puede usar {pcap}: {e}")
         return False
-    head = pcap.read_bytes()[:4]
     if head not in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4", b"\x4d\x3c\xb2\xa1", b"\xa1\xb2\x3c\x4d",
                     b"\x0a\x0d\x0d\x0a"):
         ctx.out.error(f"{pcap} no parece una captura (.pcap/.pcapng)")

@@ -66,3 +66,14 @@ def write(path: Path, text: str) -> Path:
     path.write_text(text, encoding="utf-8")
     os.chmod(path, 0o640)
     return path
+
+
+def csv_safe(row) -> list[str]:
+    """Celdas de un CSV que se abrirá en una hoja de cálculo: un valor que empieza por = + - @ (un
+    nombre de usuario, un GECOS, el CN de un certificado...) se trataría como fórmula."""
+    out = []
+    for v in row:
+        s = str(v)
+        formula = s[:1] in ("=", "+", "-", "@", "\t", "\r") and not re.fullmatch(r"-?\d+(\.\d+)?", s)
+        out.append("'" + s if formula else s)
+    return out

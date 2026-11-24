@@ -419,7 +419,7 @@ def webs_ultimo(ctx: Context, v: dict) -> bool:
 def _tool(ctx, args: list[str], label: str, url: str, ok_rc=(0,)) -> tuple[int, str]:
     d = results.new_dir("web", f"{label}_{urlparse(url).hostname or 'web'}")
     tooling.show_cmd(ctx, args)
-    results.write(d / "orden.txt", " ".join(args) + "\n")
+    results.write(d / "orden.txt", " ".join(tooling.redact(args)) + "\n")
     rc, out = stream(ctx, args, accion=f"web_{label}", objetivo=url, save_to=d / f"{label}.txt", keep=150, ok_rc=ok_rc)
     ctx.out.info(f"Salida completa en {d}")
     return rc, out

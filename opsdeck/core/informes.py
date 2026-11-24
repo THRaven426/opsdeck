@@ -17,7 +17,7 @@ from functools import partial
 from pathlib import Path
 from typing import Optional
 
-from . import system
+from . import system, xmlsafe
 
 SEV_NESSUS = {"4": "CRÍTICO", "3": "ALTO", "2": "MEDIO", "1": "BAJO", "0": "INFO"}
 SEV_WORD = {"critical": "CRÍTICO", "high": "ALTO", "medium": "MEDIO", "low": "BAJO", "info": "INFO", "none": "INFO",
@@ -225,8 +225,8 @@ def load(path: Path) -> tuple[list[Item], str]:
     text = path.read_text(errors="replace")
     if text.lstrip().startswith("<"):
         try:
-            root = ET.fromstring(text)
-        except ET.ParseError as e:
+            root = xmlsafe.fromstring(text)
+        except xmlsafe.ERRORS as e:
             return [], f"XML mal formado: {e}"
         if root.tag.startswith("NessusClientData") or root.find(".//ReportHost") is not None:
             return parse_nessus_xml(root), "nessus"

@@ -11,6 +11,7 @@ import re
 import tempfile
 import time
 from pathlib import Path
+from typing import Optional
 
 from ..core import audit, system
 from ..core.catalog import Action, Context, Module, Param, cmd
@@ -138,9 +139,13 @@ def sssd_get(section: str, key: str, default: str = "") -> str:
 
 
 def sssd_set(section: str, values: dict, create: bool = False) -> bool:
-    """Cambia claves de una sección de sssd.conf conservando el resto (escritura atómica, 0600)."""
+    """Cambia claves de una sección de sssd.conf conservando el resto: escritura atómica con el mismo
+    propietario y permisos (sssd ≥ 2.10 corre como usuario sssd) y copia previa en sssd.conf.opsdeck.bak."""
+    if any(c in str(x) for x in (section, *values, *values.values()) for c in "\r\n[]"):
+        return False
     try:
         text = SSSD_CONF.read_text()
+        st = SSSD_CONF.stat()
     except OSError:
         return False
     span = _sssd_section(text, section)
@@ -156,9 +161,14 @@ def sssd_set(section: str, values: dict, create: bool = False) -> bool:
         else:
             body = body.rstrip("\n") + f"\n{key} = {val}\n"
     new = text[:span[0]] + body + text[span[1]:]
+    backup = SSSD_CONF.with_name(SSSD_CONF.name + ".opsdeck.bak")
+    fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as b:
+        b.write(text)
     with tempfile.NamedTemporaryFile("w", dir=str(SSSD_CONF.parent), delete=False) as t:
         t.write(new)
-    os.chmod(t.name, 0o600)
+    os.chown(t.name, st.st_uid, st.st_gid)
+    os.chmod(t.name, st.st_mode & 0o7777 & ~0o077)
     os.replace(t.name, SSSD_CONF)
     return True
 
@@ -369,7 +379,24 @@ def diagnosticar(ctx: Context, v: dict) -> bool:
 
 
 def _sudo_file(group: str) -> Path:
-    return Path(f"/etc/sudoers.d/90-opsdeck-ad-{re.sub(r'[^a-z0-9_-]+', '_', group.lower())}")
+    """Un fichero por grupo, sin que dos grupos distintos compartan nombre («IT Admins», «it.admins» e
+    «it_admins» son tres ficheros). Los grupos del AD no distinguen mayúsculas."""
+    safe = re.sub(r"[^a-z0-9-]", lambda m: f"_{ord(m.group()):02x}", group.lower())
+    return Path(f"/etc/sudoers.d/90-opsdeck-ad-{safe}")
+
+
+def _old_sudo_file(group: str, dom: str) -> Optional[Path]:
+    """Nombre de versiones anteriores (podía coincidir entre grupos): solo se considera de este grupo
+    si su regla es la de este grupo."""
+    f = Path(f"/etc/sudoers.d/90-opsdeck-ad-{re.sub(r'[^a-z0-9_-]+', '_', group.lower())}")
+    if f == _sudo_file(group) or not f.is_file():
+        return None
+    try:
+        rules = [l for l in f.read_text(errors="replace").splitlines() if l.strip() and not l.startswith("#")]
+    except OSError:
+        return None
+    refs = {_ad_group_ref(group, dom), "%" + group.replace(" ", "\\ "), "%" + f"{group}@{dom}".replace(" ", "\\ ")}
+    return f if rules and all(l.split(" ALL=")[0] in refs for l in rules) else None
 
 
 def _grant_sudo(ctx, group: str, dom: str) -> bool:
@@ -493,11 +520,16 @@ def sudo_grupo(ctx: Context, v: dict) -> bool:
 
 
 def sudo_quitar(ctx: Context, v: dict) -> bool:
-    f = _sudo_file(v["grupo"].strip())
-    if not f.exists():
+    group = v["grupo"].strip()
+    if not GROUP_RE.match(group):
+        ctx.out.error("Nombre de grupo no válido")
+        return False
+    d = joined() or {}
+    files = [f for f in (_sudo_file(group), _old_sudo_file(group, d.get("nombre", ""))) if f and f.exists()]
+    if not files:
         ctx.out.info("Ese grupo no tiene sudo concedido por opsdeck.")
         return True
-    ok = apply(ctx, "dominio_quitar_sudo_grupo", v["grupo"], ["rm", "-f", str(f)])
+    ok = all(apply(ctx, "dominio_quitar_sudo_grupo", group, ["rm", "-f", str(f)]) for f in files)
     if ok:
         ctx.out.ok(f"'{v['grupo']}' ya no tiene sudo en este equipo.")
     return ok
@@ -650,7 +682,8 @@ servicio **sssd** en *Servicios*.
                    params=[Param("grupo", "Grupo del dominio")],
                    confirm="Los miembros de '{grupo}' serán administradores de este equipo. ¿Continuar?"),
             Action("sudo_quitar", "Quitar sudo a un grupo del dominio", sudo_quitar, changes=True, full=True,
-                   params=[Param("grupo", "Grupo del dominio")]),
+                   params=[Param("grupo", "Grupo del dominio")],
+                   confirm="Los miembros de '{grupo}' dejarán de ser administradores de este equipo. ¿Continuar?"),
             Action("salir", "Salir del dominio", salir, changes=True, full=True, params=[
                 Param("usuario", "Cuenta del dominio (para borrar el equipo del AD)", required=False),
                 Param("password", "Contraseña (si indicas cuenta)", "password", required=False)],

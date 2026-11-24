@@ -12,12 +12,11 @@ confirmación. Nada se explota: se confirma y se recomienda."""
 from __future__ import annotations
 
 import re
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from ..core import audit, nmapxml, recomendacion, results, scope, tooling
+from ..core import audit, nmapxml, recomendacion, results, scope, tooling, xmlsafe
 from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.ops import stream
 from ..core.recomendacion import Finding
@@ -216,7 +215,7 @@ def elastic(ip: str, port: int) -> list[Finding]:
     for scheme in ("http", "https"):
         try:
             from .web import request
-            r = request(f"{scheme}://{ip}:{port}/", limit=8000, timeout=5)
+            r = request(f"{scheme}://{ip}:{port}/", follow=False, limit=8000, timeout=5)
             body = r.get("cuerpo", b"").decode("utf-8", "replace")
             if r.get("estado") == 200 and "cluster_name" in body:
                 ver = re.search(r'"number"\s*:\s*"([^"]+)"', body)
@@ -404,8 +403,8 @@ def fugas(ctx: Context, v: dict) -> bool:
 
 def _xml_hosts(path: Path) -> list[dict]:
     try:
-        root = ET.parse(path).getroot()
-    except (ET.ParseError, OSError):
+        root = xmlsafe.parse_file(path)
+    except (*xmlsafe.ERRORS, OSError):
         return []
     out = []
     for h in root.findall("host"):
@@ -435,8 +434,8 @@ def difusion(ctx: Context, v: dict) -> bool:
     tooling.show_cmd(ctx, args)
     stream(ctx, args, accion="exposicion_difusion", objetivo=iface or "red local", keep=0, show=False)
     try:
-        root = ET.parse(out.with_suffix(".xml")).getroot()
-    except (ET.ParseError, OSError):
+        root = xmlsafe.parse_file(out.with_suffix(".xml"))
+    except (*xmlsafe.ERRORS, OSError):
         ctx.out.error("nmap no generó resultados (¿root? ¿interfaz?)")
         return False
     findings = []

@@ -37,7 +37,7 @@ PROFILES = {
                          "U:53,69,123,161,500,623,1900,5353"]),
 }
 LIGHT_PROFILES = ("rapido", "estandar")
-FORBIDDEN = ("-o", "-iL", "-iR", "--script-updatedb", "--datadir", "--resume", "--stylesheet")
+FORBIDDEN = tooling.COMMON_FORBIDDEN
 TIMINGS = [("", "La del perfil"), ("T0", "T0 paranoico (IDS)"), ("T1", "T1 sigiloso"), ("T2", "T2 educado"),
            ("T3", "T3 normal"), ("T4", "T4 agresivo (red buena)"), ("T5", "T5 loco (puede perder puertos)")]
 PORTS_RE = re.compile(r"^[TUSU:0-9,\-]+$")
@@ -52,12 +52,11 @@ def _targets(ctx, text: str) -> list[str]:
     if not items:
         ctx.out.error("Indica al menos un objetivo")
         return []
-    if len(items) == 1 and Path(items[0]).is_file():
-        problem = scope.target_file_problem(Path(items[0]))
+    if scope.is_target_file(text):
+        items, problem = scope.read_target_file(items[0])
         if problem:
-            ctx.out.error(f"No se usa la lista de objetivos: {problem}")
+            ctx.out.error(problem)
             return []
-        return ["-iL", items[0]]
     for t in items:
         if not TARGET_RE.match(t):
             ctx.out.error(f"Objetivo no válido: '{t}'")
@@ -73,9 +72,11 @@ def _exclude(text: str) -> list[str]:
 def _run(ctx, label: str, args: list[str], targets: list[str], exclude: str, d: Path, name: str) -> tuple[int, Path]:
     out = d / name
     cmd_line = ["nmap", *args, *_exclude(exclude), "-oA", str(out), "--stats-every", "30s", *targets]
-    results.write(d / "orden.txt", " ".join(shlex.quote(a) for a in cmd_line) + "\n")
-    ctx.out.info("$ " + " ".join(shlex.quote(a) for a in cmd_line))
-    rc, _ = stream(ctx, cmd_line, accion=f"nmap_{label}", objetivo=" ".join(targets), detalle=" ".join(args),
+    shown = tooling.redact(cmd_line)
+    results.write(d / "orden.txt", " ".join(shlex.quote(a) for a in shown) + "\n")
+    ctx.out.info("$ " + " ".join(shlex.quote(a) for a in shown))
+    rc, _ = stream(ctx, cmd_line, accion=f"nmap_{label}", objetivo=" ".join(targets)[:500],
+                   detalle=" ".join(tooling.redact(args)),
                    keep=60)
     return rc, out.with_suffix(".xml")
 
@@ -131,6 +132,10 @@ def advanced(ctx: Context, v: dict, base: list[str]) -> Optional[list[str]]:
         else:
             args += ["--script", scripts]
     sargs = (v.get("script_args") or "").strip()
+    problem = tooling.script_args_problem(sargs)
+    if problem:
+        ctx.out.error(f"Argumentos de scripts no permitidos ({problem}): no se admiten rutas ni ficheros")
+        return None
     if sargs:
         if "--script-args" in args:            # nmap solo usa el último --script-args: se combinan
             i = args.index("--script-args")

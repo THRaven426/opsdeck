@@ -27,3 +27,10 @@ rm -rf "$DEST"
 if (( ALL )); then rm -rf "$DATA_DIR" "$LOG_DIR" "$CONF_DIR"; fi
 echo "$NAME desinstalado.$( (( ALL )) || echo " Se conservan $DATA_DIR, $LOG_DIR y $CONF_DIR.")"
 echo "Los paquetes que se instalaron para los módulos (xrdp, etc.) no se tocan."
+# Las reglas de sudo concedidas con la herramienta siguen vigentes: se avisa, no se borran solas
+shopt -s nullglob
+rules=(/etc/sudoers.d/90-opsdeck-*)
+if (( ${#rules[@]} )); then
+  echo "AVISO: siguen activas estas reglas de sudo creadas con $NAME (bórralas si ya no deben existir):"
+  printf '  %s\n' "${rules[@]}"
+fi

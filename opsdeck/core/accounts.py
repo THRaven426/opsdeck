@@ -35,7 +35,37 @@ GID_MIN = login_def("GID_MIN", 1000)
 
 
 def valid_name(name: str) -> bool:
-    return bool(NAME_RE.match(name or ""))
+    return bool(NAME_RE.fullmatch(name or ""))
+
+
+def sudoers_groups() -> set[str]:
+    """Grupos que aparecen como «%grupo» en sudoers. Un grupo así da sudo aunque aún no exista."""
+    files = [Path("/etc/sudoers")]
+    d = Path("/etc/sudoers.d")
+    if d.is_dir():
+        files += sorted(p for p in d.iterdir() if p.is_file() and "." not in p.name and not p.name.endswith("~"))
+    found: set[str] = set()
+    for f in files:
+        try:
+            text = f.read_text(errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if line.lstrip().startswith("#") and not line.lstrip().startswith(("#include", "#includedir")):
+                continue
+            found.update(re.findall(r"%:?([A-Za-z0-9_][A-Za-z0-9_.-]*)", line))
+    return found
+
+
+def reserved_name(name: str) -> str:
+    """Motivo por el que un usuario o grupo nuevo no puede llamarse así; cadena vacía si puede.
+    useradd crea un grupo con el nombre del usuario: si ese nombre es un grupo privilegiado que aún
+    no existe (admin en Ubuntu, docker antes de instalarlo...), la cuenta nueva sería administradora."""
+    if name in priv_groups() or name in ("admin", "sudo", "wheel", "root"):
+        return f"'{name}' es un grupo privilegiado: una cuenta o grupo con ese nombre tendría sus permisos"
+    if name in sudoers_groups():
+        return f"sudoers da permisos al grupo '%{name}': una cuenta o grupo con ese nombre los heredaría"
+    return ""
 
 
 def user(name: str) -> Optional[pwd.struct_passwd]:

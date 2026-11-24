@@ -25,7 +25,14 @@ TAG_RE = re.compile(r"^[A-Za-z0-9_.,:-]*$")
 PATH_RE = re.compile(r"^[A-Za-z0-9_./,~-]*$")
 FORBIDDEN = tooling.COMMON_FORBIDDEN + ("-u", "-target", "-update", "-up", "-ut", "-update-templates",
                                         "-lfa", "-allow-local-file-access", "-code",
-                                        "-config", "-uc", "-uncover", "-uq", "-uncover-query", "-ue", "-uncover-engine")
+                                        "-config", "-uc", "-uncover", "-uq", "-uncover-query", "-ue", "-uncover-engine",
+                                        "-me", "-markdown-export", "-je", "-json-export", "-jle", "-jsonl-export",
+                                        "-se", "-sarif-export", "-srd", "-store-resp-dir", "-sresp", "-store-resp",
+                                        "-elog", "-error-log", "-tlog", "-trace-log", "-project", "-project-path",
+                                        "-resume", "-t", "-templates", "-w", "-workflows", "-turl", "-template-url",
+                                        "-wurl", "-workflow-url", "-ev", "-env-vars", "-headless", "-sb",
+                                        "-system-chrome", "-cdp-endpoint", "-ldf", "-tp", "-profile",
+                                        "-sf", "-secret-file", "-ps", "-passive")
 
 # Producto detectado por nmap (en minúsculas) -> etiquetas de nuclei. Solo afina qué plantillas se usan;
 # la detección la hacen las plantillas (que se actualizan a diario), no esta tabla.
@@ -80,9 +87,11 @@ def tags_from_scan(scan: nmapxml.Scan) -> list[str]:
 def _targets(ctx: Context, v: dict) -> tuple[list[str], str]:
     target = (v.get("objetivo") or "").strip()
     if target:
-        if Path(target).is_file() and " " not in target:
-            items = [l.strip() for l in Path(target).read_text(errors="replace").splitlines()
-                     if l.strip() and not l.startswith("#")]
+        if scope.is_target_file(target):
+            items, problem = scope.read_target_file(target)
+            if problem:
+                ctx.out.error(problem)
+                return [], ""
         else:
             items = target.split()
         label = target.replace("/", "_").replace(":", "_")[:40]
@@ -117,7 +126,7 @@ def build_args(ctx: Context, v: dict, tfile: Path, out: Path, *, tags: str = "",
             args += [flag, val]
     tpl = (v.get("plantillas") or "").strip()
     if tpl:
-        if not PATH_RE.match(tpl):
+        if not PATH_RE.match(tpl) or ".." in tpl or any(p.startswith(("/", "~")) for p in tpl.split(",")):
             ctx.out.error("Plantillas: indica rutas o carpetas separadas por coma (p. ej. http/cves/2025/,ssl/)")
             return []
         args += ["-t", tpl]
@@ -170,11 +179,11 @@ def _run(ctx: Context, v: dict, label: str, *, tags: str = "", severity: str = "
     args = build_args(ctx, v, tfile, out, tags=tags, severity=severity)
     if not args:
         return False
-    results.write(d / "orden.txt", " ".join(args) + "\n")
+    results.write(d / "orden.txt", " ".join(tooling.redact(args)) + "\n")
     tooling.show_cmd(ctx, args)
     ctx.out.info(f"Analizando {len(targets)} objetivos" + (f" (severidad: {severity})" if severity else "")
                  + (f" · etiquetas: {tags}" if tags else "") + "; s = detener...")
-    rc, _ = stream(ctx, args, accion=accion, objetivo=tlabel, detalle=" ".join(args[9:])[:300], keep=80)
+    rc, _ = stream(ctx, args, accion=accion, objetivo=tlabel, detalle=" ".join(tooling.redact(args[9:]))[:300], keep=80)
     return report(ctx, out, tlabel, rc)
 
 
@@ -324,7 +333,8 @@ A diferencia del "CVSS" del escaneo de nmap (que solo mira el número de versió
         confirm = lambda v: (f"nuclei enviará pruebas activas a {v.get('objetivo') or 'los servicios del último escaneo'}. "
                              "¿Tienes autorización?")
         return [
-            Action("actualizar", "Actualizar plantillas", actualizar),
+            Action("actualizar", "Actualizar plantillas", actualizar, changes=True,
+                   confirm="Se descargarán las últimas plantillas de nuclei. ¿Continuar?"),
             Action("analizar", "Analizar", analizar, params=[obj, sev, ok, *adv_params()], confirm=confirm),
             Action("dirigido", "Análisis dirigido por el último escaneo", dirigido, params=[
                 Param("severidad", "Severidad", "choice", "", choices=[("", "Todas")] + SEVERITIES), ok,
