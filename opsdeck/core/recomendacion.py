@@ -287,7 +287,6 @@ def _reco(f: Finding) -> Optional[Reco]:
 
 def recommend(findings: list[Finding]) -> list[Reco]:
     recos = [r for r in (_reco(f) for f in findings) if r]
-    # quitar duplicados exactos conservando el orden
     vistos, uniq = set(), []
     for r in recos:
         k = (r.objetivo, r.que, r.accion)
@@ -322,7 +321,7 @@ def from_json(text: str) -> list[Finding]:
 
 def public_exploit(terms: str) -> Optional[tuple[int, list[str]]]:
     terms = (terms or "").strip()
-    if not terms or not system.has_cmd("searchsploit"):
+    if not terms or terms.startswith("-") or not system.has_cmd("searchsploit"):
         return None
     r = system.run(["searchsploit", "--json", terms], c_locale=True, timeout=30)
     if not r.ok:

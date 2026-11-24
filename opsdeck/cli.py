@@ -12,6 +12,7 @@
   opsdeck autoactualizar          descarga la última versión de la herramienta (git)
   opsdeck <módulo>                acciones del módulo
   opsdeck <módulo> <acción> [--dato valor ...] [--si]
+                                  las contraseñas se piden sin eco con --password -
 """
 
 from __future__ import annotations
@@ -34,8 +35,8 @@ console = Console(highlight=False)
 
 
 class ConsoleOut:
-    """Salida en la terminal. Los mensajes llevan datos externos (nombres de equipos, cabeceras,
-    respuestas de servicios): se escapan para que un «[...]» no se interprete como marcado de Rich."""
+    """Los mensajes llevan datos ajenos (banners, objetivos, títulos): se escapan para que rich no
+    los interprete como marcado."""
 
     def info(self, m): console.print(f"[blue][*][/] {escape(str(m))}")
     def ok(self, m): console.print(f"[green][+][/] {escape(str(m))}")
@@ -47,7 +48,7 @@ class ConsoleOut:
     def table(self, headers, rows):
         t = Table(*headers, show_edge=False, header_style="bold")
         for r in rows:
-            t.add_row(*[Text(str(c)) for c in r])
+            t.add_row(*[escape(str(c)) for c in r])
         console.print(t)
 
     def secret(self, label, value):
@@ -261,17 +262,24 @@ def cmd_autoactualizar(yes: bool) -> int:
     if not system.has_cmd("git"):
         console.print("Falta git: instálalo (apt install git) o actualiza con install.sh.")
         return 1
-    system.run(["git", "-C", str(repo), "fetch", "--quiet"])
-    behind = system.run(["git", "-C", str(repo), "log", "--oneline", "HEAD..@{u}"]).out.strip()
+    fetch = system.run(["git", "-C", str(repo), "fetch", "--quiet"])
+    if not fetch.ok:
+        console.print("No se pudo consultar el repositorio remoto:\n" + escape(fetch.text))
+        return 1
+    log = system.run(["git", "-C", str(repo), "log", "--oneline", "HEAD..@{u}"])
+    if not log.ok:
+        console.print("La instalación no sigue ninguna rama remota:\n" + escape(log.text))
+        return 1
+    behind = log.out.strip()
     if not behind:
         console.print(f"[green]{NAME} {VERSION} ya es la última versión.[/]")
         return 0
-    console.print("Cambios disponibles:\n" + behind)
+    console.print("Cambios disponibles:\n" + escape(behind))
     if not yes and not _ask_yes("¿Actualizar ahora?"):
         console.print("Cancelado.")
         return 1
     r = system.run(["git", "-C", str(repo), "pull", "--ff-only"])
-    console.print(r.text)
+    console.print(r.text, markup=False)
     if not r.ok:
         return 1
     pip = repo / ".venv" / "bin" / "pip"
@@ -282,11 +290,31 @@ def cmd_autoactualizar(yes: bool) -> int:
     return 0
 
 
+def _read_secret(label: str) -> "str | None":
+    """Pide un secreto sin eco (o lo lee de la entrada estándar si no es un terminal)."""
+    try:
+        if sys.stdin.isatty():
+            return getpass.getpass(f"{label}: ")
+        return sys.stdin.readline().rstrip("\n")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+
+
 def cmd_accion(m, a, values: dict, yes: bool) -> int:
     pos = values.pop("_pos", [])
     for p in a.visible_params():                       # el primer dato se puede dar sin --nombre
         if p.name not in values and pos and not p.advanced:
             values[p.name] = pos.pop(0)
+        if p.kind == "password" and p.name in values:
+            if values[p.name] == "-":
+                secret = _read_secret(p.label)
+                if secret is None:
+                    return 1
+                values[p.name] = secret
+            elif values[p.name]:
+                console.print(f"[yellow]Aviso: --{p.name} en la línea de comandos queda en el historial y en el "
+                              f"registro de sudo. Usa --{p.name} - para escribirlo sin que se vea.[/]")
         if p.name in values or p.kind == "bool":
             if p.kind == "bool" and p.name in values and isinstance(values[p.name], str):
                 values[p.name] = values[p.name].lower() in ("1", "si", "sí", "true", "yes", "s")

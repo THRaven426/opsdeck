@@ -4,6 +4,7 @@ encontradas en el último escaneo; y, si están instalados, whatweb, nikto, test
 from __future__ import annotations
 
 import datetime as dt
+import http.client
 import re
 import socket
 import ssl
@@ -136,7 +137,7 @@ def request(url: str, method: str = "GET", follow: bool = True, limit: int = 200
             body = e.read(limit)
         except Exception:
             body = b""
-    except (urllib.error.URLError, OSError, ValueError, ssl.SSLError) as e:
+    except (urllib.error.URLError, OSError, ValueError, ssl.SSLError, http.client.HTTPException) as e:
         return {"estado": 0, "error": str(getattr(e, "reason", e)), "cabeceras": {}, "cookies": [], "cuerpo": b"", "url": url}
     single: dict = {}
     cookies = []
@@ -177,6 +178,11 @@ def check_url(url: str, deep: bool = True) -> dict:
     if h.get("error"):
         res["hallazgos"].append(("?", f"No responde: {h['error']}"))
         return res
+    final_host = urlparse(h.get("url", url)).hostname or host
+    if final_host != host and not scope.classify(final_host).ok:
+        res["fuera_alcance"] = final_host
+        res["hallazgos"].append(("?", f"Redirige a {final_host}, fuera del alcance: ese destino no se revisa"))
+        h["url"] = url
     hd = h["cabeceras"]
     body = h.get("cuerpo", b"")[:200_000].decode("utf-8", "replace")
     final_https = h.get("url", url).startswith("https://")
@@ -338,7 +344,7 @@ def revisar(ctx: Context, v: dict) -> bool:
         ctx.out.info("Para cifrados débiles (RC4, 3DES/SWEET32, anónimos), renegociación o POODLE: módulo «TLS y certificados».")
     if v.get("ficheros"):
         base = f"{urlparse(h['url']).scheme}://{urlparse(h['url']).netloc}"
-        for path, st, sev, what in sensitive_files(base):
+        for path, _st, sev, what in sensitive_files(base):
             r["hallazgos"].append((sev, f"{what}: /{path}"))
     if r["hallazgos"]:
         ctx.out.title("Hallazgos")
@@ -392,7 +398,7 @@ def webs_ultimo(ctx: Context, v: dict) -> bool:
     for u in urls:
         r = check_url(u, deep=v.get("metodos", True))
         if v.get("ficheros") and not r["http"].get("error"):
-            for path, st, sev, what in sensitive_files(u):
+            for path, _st, sev, what in sensitive_files(u):
                 r["hallazgos"].append((sev, f"{what}: /{path}"))
         findings += recomendacion.from_web(r)
         worst = min((x[0] for x in r["hallazgos"]), key=lambda l: ("ALTO", "MEDIO", "BAJO", "INFO", "?").index(l)
@@ -441,7 +447,11 @@ def whatweb(ctx: Context, v: dict) -> bool:
         args += ["-U", v["agente"]]
     if px:
         args += ["--proxy", px.split("://", 1)[1].rstrip("/")]
-    for h in tooling.headers(v.get("cabeceras", ""))[0]:
+    hdrs, err = tooling.headers(v.get("cabeceras", ""))
+    if err:
+        ctx.out.error(err)
+        return False
+    for h in hdrs:
         args += ["-H", h]
     rc, _ = _tool(ctx, args + extra + [norm_url(v["url"])], "whatweb", norm_url(v["url"]))
     return rc == 0
@@ -499,7 +509,15 @@ def testssl(ctx: Context, v: dict) -> bool:
     exe = "testssl" if system.has_cmd("testssl") else "testssl.sh"
     raw = v["url"].strip()
     u = urlparse(norm_url(raw))
-    port = u.port or (80 if raw.startswith("http://") else 443)
+    try:
+        port = u.port or (80 if raw.startswith("http://") else 443)
+    except ValueError:
+        ctx.out.error("Puerto no válido en la URL")
+        return False
+    if not u.hostname:
+        ctx.out.error("URL sin equipo")
+        return False
+    target = f"[{u.hostname}]:{port}" if ":" in u.hostname else f"{u.hostname}:{port}"
     extra = _common(ctx, v, ("--logfile", "--jsonfile", "--csvfile", "--htmlfile", "--outfile", "--outFile",
                              "--file", "-iL", "--log", "--json", "--csv", "--html"))
     if extra is None:
@@ -515,9 +533,9 @@ def testssl(ctx: Context, v: dict) -> bool:
         args.append("--sneaky")
     if v.get("ip"):
         args += ["--ip", "one"]
-    rc, out = _tool(ctx, args + extra + [f"{u.hostname}:{port}"], "testssl", norm_url(raw), ok_rc=tuple(range(0, 250)))
+    rc, out = _tool(ctx, args + extra + [target], "testssl", norm_url(raw), ok_rc=tuple(range(0, 250)))
     if "doesn't seem to be a TLS/SSL enabled server" in out:
-        ctx.out.error(f"{u.hostname}:{port} no habla TLS directamente. ¿Puerto correcto? ¿Necesita STARTTLS?")
+        ctx.out.error(f"{target} no habla TLS directamente. ¿Puerto correcto? ¿Necesita STARTTLS?")
         return False
     return "Done " in out or rc == 0
 

@@ -17,7 +17,7 @@ from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.ops import apply
 
 DOMAIN_RE = re.compile(r"^(?=.{3,253}$)([A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63}$")
-GROUP_RE = re.compile(r"^[^\x00-\x1f:,=@\\/\"]{1,120}$")
+GROUP_RE = re.compile(r"^[^\x00-\x1f:,=@\\/\"-][^\x00-\x1f:,=@\\/\"]{0,119}$")   # nunca empieza por «-»
 SSSD_CONF = Path("/etc/sssd/sssd.conf")
 
 
@@ -432,9 +432,9 @@ def unir(ctx: Context, v: dict) -> bool:
         if _sssd_short_names(ctx, dom):
             ctx.out.ok("Los usuarios del dominio entran con su nombre corto (jperez en vez de jperez@dominio).")
     groups = [g.strip() for g in (v.get("permitidos") or "").split(",") if g.strip()]
-    bad = [g for g in groups if not GROUP_RE.match(g) or g.startswith("-")]
+    bad = [g for g in groups if not GROUP_RE.match(g)]
     if bad:
-        ctx.out.warn("Se ignoran nombres de grupo no válidos: " + ", ".join(bad))
+        ctx.out.warn("Se ignoran estos grupos con un nombre no válido: " + ", ".join(bad))
         groups = [g for g in groups if g not in bad]
     if groups:
         apply(ctx, "dominio_denegar_todos", dom, ["realm", "deny", "--all"], quiet=True)
@@ -455,7 +455,7 @@ def permitir(ctx: Context, v: dict) -> bool:
         ctx.out.error("El equipo no está unido a un dominio.")
         return False
     target, kind = v["nombre"].strip(), v["tipo"]
-    if not GROUP_RE.match(target) or target.startswith("-"):
+    if not GROUP_RE.match(target):
         ctx.out.error("Nombre no válido")
         return False
     if d.get("login-policy") == "allow-realm-logins":
@@ -474,7 +474,7 @@ def retirar(ctx: Context, v: dict) -> bool:
         ctx.out.error("El equipo no está unido a un dominio.")
         return False
     target, kind = v["nombre"].strip(), v["tipo"]
-    if not target or target.startswith("-") or re.search(r"[\x00-\x1f]", target):
+    if not GROUP_RE.match(target):
         ctx.out.error("Nombre no válido")
         return False
     args = ["realm", "permit", "--withdraw"] + (["-g"] if kind == "grupo" else []) + [target]

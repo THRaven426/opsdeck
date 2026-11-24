@@ -33,20 +33,37 @@ def extra_args(text: str, forbidden: tuple[str, ...] = COMMON_FORBIDDEN) -> tupl
         args = shlex.split(text)
     except ValueError as e:
         return [], f"Opciones mal escritas: {e}"
-    bad = []
+    bad, outside = [], []
     for a in args:
         if not a.startswith("-"):
+            if _looks_like_target(a) and not _in_scope(a):
+                outside.append(a)
             continue
         name = a.split("=", 1)[0]
+        # nmap y nuclei aceptan también la forma larga con dos guiones («--oA», «--iL», «--u»)
+        names = {name, "-" + name[2:]} if name.startswith("--") else {name}
         for f in forbidden:
             # coincidencia exacta, o forma pegada («-oX», «-ofichero») solo para opciones de una letra
-            if name == f or (len(f) == 2 and not f.startswith("--") and name.startswith(f) and not name.startswith("--")):
+            if f in names or (len(f) == 2 and not f.startswith("--") and name.startswith(f) and not name.startswith("--")):
                 bad.append(a)
                 break
     if bad:
         return [], ("No se permiten estas opciones (la salida y las listas de objetivos las gestiona opsdeck): "
                     + " ".join(bad))
+    if outside:
+        return [], ("Las opciones incluyen direcciones fuera del alcance autorizado (se tratarían como objetivos "
+                    "que no pasan por la barandilla): " + " ".join(outside))
     return args, ""
+
+
+def _looks_like_target(token: str) -> bool:
+    from .scope import _ip_bounds
+    return "://" in token or _ip_bounds(token) is not None
+
+
+def _in_scope(token: str) -> bool:
+    from .scope import classify
+    return classify(token).ok
 
 
 def int_in(v, default: int, lo: int, hi: int) -> int:

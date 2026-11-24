@@ -64,6 +64,12 @@ def conexiones(ctx: Context, v: dict) -> bool:
 def conectividad(ctx: Context, v: dict) -> bool:
     host, port = v["destino"].strip(), str(v.get("puerto") or "").strip()
     o = ctx.out
+    if not host or host.startswith("-") or any(c.isspace() for c in host):
+        o.error("Destino no válido")
+        return False
+    if port and not (port.isdigit() and 1 <= int(port) <= 65535):
+        o.error("El puerto debe ser un número entre 1 y 65535")
+        return False
     try:
         t0 = time.time()
         infos = socket.getaddrinfo(host, None)

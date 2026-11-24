@@ -122,7 +122,7 @@ def _capture(ctx, iface: str, secs: int, flt: str, pcap: Path, label: str, v: di
     if v.get("rotar_mb"):
         args += ["-C", str(tooling.int_in(v["rotar_mb"], 100, 1, 10000)), "-W", str(tooling.int_in(v.get("rotar_n"), 5, 1, 100))]
     if flt:
-        args.append(flt)
+        args += ["--", flt]                # un filtro que empiece por «-» no debe leerse como opción (-z, -w)
     ctx.out.info(f"Capturando en {iface} durante {secs} s (s = detener)...")
     rc, _ = stream(ctx, args, accion=f"trafico_{label}", objetivo=iface, detalle=f"segundos={secs} filtro={flt or '-'}",
                    keep=6, ok_rc=(0, 124))

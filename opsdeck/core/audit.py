@@ -26,8 +26,11 @@ def _rotate(log: Path, max_kb: int, keep: int) -> None:
         src = log.with_name(f"{log.name}.{i}.gz")
         if src.exists():
             src.rename(log.with_name(f"{log.name}.{i + 1}.gz"))
-    with open(log, "rb") as f_in, gzip.open(log.with_name(f"{log.name}.1.gz"), "wb") as f_out:
+    rotated = log.with_name(f"{log.name}.1.gz")
+    with open(log, "rb") as f_in, open(os.open(rotated, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640), "wb") as raw, \
+            gzip.GzipFile(fileobj=raw, mode="wb") as f_out:
         shutil.copyfileobj(f_in, f_out)
+    os.chmod(rotated, 0o640)
     log.write_text("")
 
 

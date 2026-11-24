@@ -56,6 +56,11 @@ def importar(ctx: Context, v: dict) -> bool:
     if not items:
         ctx.out.error(fmt)
         return False
+    items, dropped = informes.split_valid(items)
+    if dropped:
+        ctx.out.warn(f"Se descartan {dropped} resultados con un equipo que no es una IP ni un nombre válido.")
+    if not items:
+        return False
     d = results.new_dir("informes", f"{path.stem[:40]}")
     informes.save(items, d / "hallazgos.json")
     results.write(d / "origen.txt", f"{path}\nformato={fmt}\n")

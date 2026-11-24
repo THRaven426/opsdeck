@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 
 from ..core import audit, packages, system
 from ..core.catalog import Action, Context, Module
@@ -11,7 +12,7 @@ from ..core.catalog import Action, Context, Module
 
 def _uptime() -> str:
     try:
-        secs = int(float(open("/proc/uptime").read().split()[0]))
+        secs = int(float(Path("/proc/uptime").read_text().split()[0]))
     except OSError:
         return "?"
     d, r = divmod(secs, 86400)
@@ -22,7 +23,7 @@ def _uptime() -> str:
 def _mem() -> str:
     info = {}
     try:
-        for line in open("/proc/meminfo"):
+        for line in Path("/proc/meminfo").read_text().splitlines():
             k, v = line.split(":", 1)
             info[k] = int(v.split()[0])
     except OSError:

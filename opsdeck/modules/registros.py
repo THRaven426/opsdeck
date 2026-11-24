@@ -187,7 +187,7 @@ def buscar(ctx: Context, v: dict) -> bool:
                 if found <= 200:
                     ctx.out.line(f"{stamp(e)}  {e.get('SYSLOG_IDENTIFIER', '?')}: {e['MESSAGE'][:220]}")
     else:
-        for when, m in _messages(v["periodo"]):
+        for _when, m in _messages(v["periodo"]):
             if text in m.lower():
                 found += 1
                 if found <= 200:
