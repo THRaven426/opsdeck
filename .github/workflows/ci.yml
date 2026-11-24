@@ -54,4 +54,4 @@ jobs:
 
       # Las pruebas de cuentas y ficheros del sistema necesitan root (README, Desarrollo)
       - name: pytest
-        run: sudo -E env "PATH=$PATH" python -m pytest -q
+        run: sudo env "PATH=$PATH" python -m pytest -q
