@@ -160,7 +160,13 @@ link_for_sudo(){
   case ":$sp:" in *":/usr/local/bin:"*) return 0 ;; esac
   for dir in /usr/sbin /usr/bin /sbin /bin; do
     case ":$sp:" in
-      *":$dir:"*) ln -sf "$BIN" "$dir/$NAME" 2>/dev/null &&
+      *":$dir:"*)
+        # no se pisa un fichero ajeno con el mismo nombre (solo un enlace nuestro anterior)
+        if [[ -e "$dir/$NAME" || -L "$dir/$NAME" ]] && [[ "$(readlink "$dir/$NAME" 2>/dev/null)" != "$BIN" ]]; then
+          warn "sudo no incluye /usr/local/bin en secure_path y ya existe $dir/$NAME: no se toca"
+          return 0
+        fi
+        ln -sf "$BIN" "$dir/$NAME" 2>/dev/null &&
           warn "sudo no incluye /usr/local/bin en secure_path; enlazado también en $dir/$NAME"
           return 0 ;;
     esac

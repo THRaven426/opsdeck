@@ -24,6 +24,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.markup import escape
 from rich.table import Table
+from rich.text import Text
 
 from . import NAME, VERSION
 from .core import accounts, audit, edition, installer, packages, paths, system
@@ -112,12 +113,12 @@ def cmd_ayuda(args: list[str]) -> int:
         return 0
     m = module(args[0])
     if not m:
-        console.print(f"[red]No existe el módulo '{args[0]}'[/]")
+        console.print(f"[red]No existe el módulo '{escape(args[0])}'[/]")
         return 1
     if len(args) > 1:
         a = m.action(args[1])
         if not a:
-            console.print(f"[red]El módulo {m.id} no tiene la acción '{args[1]}'[/]")
+            console.print(f"[red]El módulo {m.id} no tiene la acción '{escape(args[1])}'[/]")
             return 1
         console.print(f"\n[bold]{m.name} › {a.label}[/]\n{a.help}\n")
         for title, group in (("", a.basic_params()), ("Opciones avanzadas", a.advanced_params())):
@@ -198,7 +199,7 @@ def cmd_instalar(args: list[str], yes: bool, opcionales: bool = False) -> int:
         return cmd_instalar_todo(yes, opcionales)
     m = module(args[0])
     if not m:
-        console.print(f"[red]No existe el módulo '{args[0]}'[/]")
+        console.print(f"[red]No existe el módulo '{escape(args[0])}'[/]")
         return 1
     st = m.status()
     if st.state == AVAILABLE and not installer.wanted_packages(m, opcionales):
@@ -232,8 +233,8 @@ def cmd_registro(args: list[str]) -> int:
         return 0
     t = Table("Fecha", "Operador", "Acción", "Objetivo", "Resultado", "Detalle", show_edge=False, header_style="bold")
     for r in rows:
-        t.add_row(r.get("fecha", ""), r.get("operador", ""), r.get("accion", ""), r.get("objetivo", ""),
-                  r.get("resultado", ""), r.get("detalle", ""))
+        t.add_row(*[Text(str(r.get(k, ""))) for k in ("fecha", "operador", "accion", "objetivo", "resultado",
+                                                          "detalle")])
     console.print(t)
     return 0
 
@@ -336,7 +337,7 @@ def cmd_accion(m, a, values: dict, yes: bool) -> int:
     text = a.confirm_text({**{p.name: p.default for p in a.params}, **values})
     if text and not yes:
         if not sys.stdin.isatty():
-            console.print(f"[yellow]{text}[/]\nEsta acción pide confirmación: repítela añadiendo --si")
+            console.print(f"[yellow]{escape(text)}[/]\nEsta acción pide confirmación: repítela añadiendo --si")
             return 1
         if not _ask_yes(text):
             console.print("Cancelado.")
@@ -376,7 +377,7 @@ def main(argv: list[str]) -> int:
         return cmd_autoactualizar(yes)
     m = module(cmd)
     if not m:
-        console.print(f"[red]Comando o módulo desconocido: {cmd}[/]\n")
+        console.print(f"[red]Comando o módulo desconocido: {escape(cmd)}[/]\n")
         print(__doc__)
         return 2
     st = m.status()
@@ -389,7 +390,7 @@ def main(argv: list[str]) -> int:
         return cmd_acciones(m)
     a = m.action(pos[0])
     if not a or not a.available():
-        console.print(f"[red]{m.id} no tiene la acción '{pos[0]}'[/]")
+        console.print(f"[red]{m.id} no tiene la acción '{escape(pos[0])}'[/]")
         return cmd_acciones(m)
     values["_pos"] = pos[1:]
     if pos[1:2] == ["?"]:

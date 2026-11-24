@@ -65,7 +65,7 @@ class TuiOut:
     def table(self, headers, rows):
         t = Table(*headers, show_edge=False, header_style="bold", expand=False)
         for r in rows:
-            t.add_row(*[str(c) for c in r])
+            t.add_row(*[Text(str(c)) for c in r])
         self._w(t)
 
     def secret(self, label, value):
@@ -108,7 +108,7 @@ class ConfirmScreen(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             yield Static("Confirmación", classes="dialog-title")
-            yield Static(self.text)
+            yield Static(self.text, markup=False)
             with Horizontal(classes="buttons"):
                 yield Button("Cancelar", id="no")
                 yield Button(self.yes, variant="error" if self.danger else "primary", id="yes")
@@ -507,8 +507,8 @@ class LogScreen(ModalScreen[None]):
         t = self.query_one(DataTable)
         t.add_columns("Fecha", "Operador", "Acción", "Objetivo", "Resultado", "Detalle")
         for r in reversed(audit.read(200)):
-            t.add_row(r.get("fecha", "")[:19].replace("T", " "), r.get("operador", ""), r.get("accion", ""),
-                      r.get("objetivo", ""), r.get("resultado", ""), r.get("detalle", ""))
+            t.add_row(Text(r.get("fecha", "")[:19].replace("T", " ")),
+                      *[Text(str(r.get(k, ""))) for k in ("operador", "accion", "objetivo", "resultado", "detalle")])
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(None)

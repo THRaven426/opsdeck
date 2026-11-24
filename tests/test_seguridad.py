@@ -60,3 +60,64 @@ def test_config_de_otro_usuario_no_se_carga(tmp_path, monkeypatch):
         assert "cuenta%con%porcentaje" in f.read_text()
     finally:
         config.settings.cache_clear()
+
+
+class Out:
+    def __init__(self):
+        self.msgs = []
+
+    def __getattr__(self, name):
+        return lambda *a, **k: self.msgs.append((name, a))
+
+
+class Ctx:
+    def __init__(self):
+        self.out = Out()
+
+
+
+def test_fichero_sudo_sin_puntos():
+    from opsdeck.modules import usuarios
+    assert usuarios._sudo_file("juan").name == "90-opsdeck-juan"
+    f = usuarios._sudo_file("juan.perez")
+    assert "." not in f.name and not f.name.endswith("~") and f.name == "90-opsdeck-juan_2eperez"
+    assert usuarios._legacy_sudo_file("juan.perez").name == "90-opsdeck-juan.perez"
+
+
+def test_realm_no_recibe_opciones_como_nombre(monkeypatch):
+    from opsdeck.modules import dominio
+    applied = []
+    monkeypatch.setattr(dominio, "joined", lambda: {"nombre": "empresa.local"})
+    monkeypatch.setattr(dominio, "apply", lambda *a, **k: applied.append(a) or True)
+    assert not dominio.retirar(Ctx(), {"nombre": "--all", "tipo": "grupo"})
+    assert not dominio.permitir(Ctx(), {"nombre": "-x", "tipo": "grupo"})
+    assert not applied
+    assert dominio.retirar(Ctx(), {"nombre": "Acceso Linux", "tipo": "grupo"})
+    assert applied[-1][3] == ["realm", "permit", "--withdraw", "-g", "Acceso Linux"]
+
+
+def test_restablecer_no_toca_root():
+    from opsdeck.modules import usuarios
+    ctx = Ctx()
+    assert not usuarios.restablecer(ctx, {"usuario": "root", "modo": "generar", "forzar": False})
+    assert any(k == "error" and "UID 0" in a[0] for k, a in ctx.out.msgs)
+
+
+async def test_tui_muestra_datos_con_corchetes():
+    from textual.widgets import RichLog
+
+    from opsdeck.ui.app import ConfirmScreen, OpsdeckApp, TuiOut
+    app = OpsdeckApp()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        app.push_screen(ConfirmScreen("¿Detener 'svc[/x]'?"))
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        log = app.main.query_one("#output", RichLog)
+        out = TuiOut(app, log)
+        out._w = log.write
+        out.table(["Recurso"], [["datos [/red]"]])
+        await pilot.pause()
+        assert any("datos [/red]" in line.text for line in log.lines)
