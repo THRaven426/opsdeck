@@ -15,6 +15,9 @@ El bucle local (127.0.0.0/8, ::1) está siempre dentro.
 from __future__ import annotations
 
 import ipaddress
+import os
+import pwd
+import re
 import socket
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -143,17 +146,77 @@ def _inside(ip, nets) -> bool:
     return any(ip.version == n.version and ip in n for n in nets)
 
 
-def _specs_from_text(text: str) -> list[str]:
+def _range_inside(lo, hi, nets) -> bool:
+    """Todo el intervalo [lo, hi] dentro de una misma red (tras fusionar las contiguas): comprobar
+    solo los extremos dejaría pasar rangos que saltan entre dos redes autorizadas separadas."""
+    for version in (4, 6):
+        same = [n for n in nets if n.version == version]
+        if lo.version != version or not same:
+            continue
+        if any(lo in n and hi in n for n in _merge(same)):
+            return True
+    return False
+
+
+def _merge(nets) -> list:
+    nets = sorted(nets, key=lambda n: n.network_address)
+    merged: list = []
+    for n in nets:
+        if merged and int(n.network_address) <= int(merged[-1][1]) + 1:
+            merged[-1][1] = max(merged[-1][1], n.broadcast_address)
+        else:
+            merged.append([n.network_address, n.broadcast_address])
+    return [_Span(a, b) for a, b in merged]
+
+
+@dataclass(frozen=True)
+class _Span:
+    first: object
+    last: object
+
+    def __contains__(self, ip) -> bool:
+        return self.first <= ip <= self.last
+
+
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9\[][A-Za-z0-9._:/@?#=&%\[\]-]*$")
+
+
+def target_file_problem(path: Path) -> Optional[str]:
+    """Motivo por el que no se acepta una lista de objetivos, o None. Se lee como root y nmap la
+    vuelve a leer después: solo vale si es de root o del operador y nadie más puede modificarla."""
+    try:
+        st = path.stat()
+    except OSError as e:
+        return f"no se puede leer la lista {path}: {e.strerror}"
+    try:
+        owner_ok = st.st_uid in (0, os.geteuid(), pwd.getpwnam(system.operator()).pw_uid)
+    except KeyError:
+        owner_ok = st.st_uid in (0, os.geteuid())
+    if not owner_ok or st.st_mode & 0o022:
+        return f"la lista {path} es de otro usuario o la pueden modificar otros"
+    return None
+
+
+def _specs_from_text(text: str) -> tuple[list[str], list[str]]:
+    """(objetivos, problemas). Una lista en fichero se valida línea a línea y nunca se repite su
+    contenido si no tiene forma de objetivo (podría ser cualquier fichero del sistema)."""
     toks = text.split()
     if len(toks) == 1:
         p = Path(toks[0])
         if p.is_file():
+            problem = target_file_problem(p)
+            if problem:
+                return [], [problem]
             try:
-                return [l.strip() for l in p.read_text().splitlines()
-                        if l.strip() and not l.strip().startswith("#")]
-            except OSError:
-                return toks
-    return toks
+                lines = p.read_text(errors="replace").splitlines()
+            except OSError as e:
+                return [], [f"no se puede leer la lista {p}: {e.strerror}"]
+            specs = [t for line in lines if not line.strip().startswith("#") for t in line.split()]
+            bad = sum(1 for t in specs if not _TOKEN_RE.match(t))
+            if bad:
+                return [], [f"la lista {p} tiene {bad} entrada(s) que no son objetivos válidos"]
+            return specs, []
+    return toks, []
 
 
 @dataclass
@@ -161,22 +224,24 @@ class Result:
     dentro: list = field(default_factory=list)
     fuera: list = field(default_factory=list)
     sin_resolver: list = field(default_factory=list)
+    invalidos: list = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        return not self.fuera and not self.sin_resolver
+        return not self.fuera and not self.sin_resolver and not self.invalidos
 
 
 def classify(text: str, nets: Optional[list] = None) -> Result:
     """Clasifica cada objetivo de 'text' en dentro / fuera / sin_resolver respecto al alcance."""
     nets = authorized_networks() if nets is None else nets
-    res = Result()
-    for spec in _specs_from_text(text):
+    specs, problems = _specs_from_text(text)
+    res = Result(invalidos=problems)
+    for spec in specs:
         spec = host_of(spec) or spec
         b = _ip_bounds(spec)
         if b is not None:
             lo, hi = b
-            (res.dentro if _inside(lo, nets) and _inside(hi, nets) else res.fuera).append(spec)
+            (res.dentro if _range_inside(lo, hi, nets) else res.fuera).append(spec)
         else:
             ips = _resolve(spec)
             if not ips:
@@ -198,6 +263,11 @@ def gate(ctx, text: str, v: dict, accion: str = "red") -> bool:
     res = classify(text)
     if res.ok:
         return True
+    if res.invalidos:
+        for problem in res.invalidos:
+            ctx.out.error("No se usa la lista de objetivos: " + problem)
+        audit.record(f"alcance_bloqueado_{accion}", "lista de objetivos", "BLOQUEADO", "; ".join(res.invalidos))
+        return False
     nets = authorized_networks()
     problemas = res.fuera + res.sin_resolver
     if not v.get(PARAM_OK):

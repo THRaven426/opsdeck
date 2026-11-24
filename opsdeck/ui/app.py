@@ -591,8 +591,6 @@ class OpsdeckApp(App):
                 f"Cierra y abre la herramienta escribiendo solo: {NAME}", style="yellow"))
         self.main.query_one("#modules", OptionList).focus()
 
-    # -- módulos
-
     def reload_modules(self) -> None:
         hidden = config.hidden_modules()
         mods = all_modules()
@@ -662,8 +660,6 @@ class OpsdeckApp(App):
         if acts.has_focus:
             self.main.query_one("#modules", OptionList).focus()
 
-    # -- acciones
-
     def start_action(self, m: Module, a: Action) -> None:
         if self.running:
             self.notify("Espera a que termine la acción en curso.", severity="warning")
@@ -701,8 +697,6 @@ class OpsdeckApp(App):
             f"{'Terminado' if ok else 'Terminado con errores'}: {a.label}   ·   ? = ayuda")
         if a.changes:
             self.reload_modules()
-
-    # -- teclas
 
     def action_help(self) -> None:
         focused = self.focused

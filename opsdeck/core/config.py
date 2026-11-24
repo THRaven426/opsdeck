@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import configparser
 import os
+import tempfile
 from functools import lru_cache
 
 from . import paths
@@ -45,28 +46,41 @@ DEFAULTS = {
 
 
 def _safe(path) -> bool:
+    """De root (o del propio usuario si se eligió otra ruta con OPSDECK_CONF) y que nadie más
+    pueda escribirla: la configuración decide el alcance de red y quién usa la edición completa."""
     try:
         st = os.stat(path)
     except OSError:
         return False
-    return st.st_uid == 0 and not (st.st_mode & 0o022)
+    owners = {0, os.geteuid()} if os.environ.get("OPSDECK_CONF") else {0}
+    return st.st_uid in owners and not (st.st_mode & 0o022)
 
 
 @lru_cache(maxsize=1)
 def settings() -> configparser.ConfigParser:
-    cfg = configparser.ConfigParser()
+    cfg = configparser.ConfigParser(interpolation=None)
     cfg.read_dict(DEFAULTS)
-    if paths.CONF_FILE.exists() and (_safe(paths.CONF_FILE) or os.environ.get("OPSDECK_CONF")):
+    if paths.CONF_FILE.exists() and _safe(paths.CONF_FILE):
         cfg.read(paths.CONF_FILE, encoding="utf-8")
     return cfg
 
 
 def save() -> None:
+    """Escritura atómica: un fallo a mitad no deja la configuración vacía."""
     cfg = settings()
     paths.CONF_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(paths.CONF_FILE, "w", encoding="utf-8") as f:
-        cfg.write(f)
-    os.chmod(paths.CONF_FILE, 0o644)
+    fd, tmp = tempfile.mkstemp(dir=paths.CONF_FILE.parent, prefix=".conf-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            cfg.write(f)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, paths.CONF_FILE)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def set_value(section: str, option: str, value: str) -> None:

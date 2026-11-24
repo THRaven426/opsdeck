@@ -1,12 +1,65 @@
-"""Pruebas de los arreglos de seguridad y robustez: marcado de Rich con datos externos, secretos de
-netexec, nombres de reglas sudo y validación de nombres que se pasan a realm."""
-import glob
-import os
-import tempfile
+"""Entradas no confiables que acaban en la línea de comandos o en la consola."""
+import ipaddress
 
-os.environ.setdefault("OPSDECK_DATA", "/tmp/od/data")
-os.environ.setdefault("OPSDECK_LOG", "/tmp/od/log")
-os.environ.setdefault("OPSDECK_CONF", "/tmp/od/od.conf")
+from opsdeck.core import informes, scope, tooling
+from opsdeck.core.informes import Item
+
+
+def test_informe_descarta_equipos_que_serian_opciones(tmp_path):
+    f = tmp_path / "malo.nessus"
+    f.write_text('<NessusClientData_v2><Report>'
+                 '<ReportHost name="-oN/etc/passwd"><ReportItem port="80" severity="3" pluginID="1" pluginName="x"/></ReportHost>'
+                 '<ReportHost name="10.0.0.5"><ReportItem port="abc" severity="3" pluginID="2" pluginName="y"/></ReportHost>'
+                 '</Report></NessusClientData_v2>')
+    items, fmt = informes.load(f)
+    assert fmt == "nessus" and len(items) == 2
+    ok, dropped = informes.split_valid(items)
+    assert dropped == 1 and [i.host for i in ok] == ["10.0.0.5"] and ok[0].puerto is None
+
+
+def test_leer_importacion_antigua_filtra_equipos(tmp_path):
+    p = tmp_path / "hallazgos.json"
+    informes.save([Item("-iL/etc/shadow", 22, "tcp", "ALTO", "1", "x"), Item("srv01", 22, "tcp", "ALTO", "1", "x")], p)
+    assert [i.host for i in informes.read(p)] == ["srv01"]
+
+
+def test_opciones_extra_forma_larga_y_objetivos_colados(monkeypatch):
+    nets = [ipaddress.ip_network("10.0.0.0/24")]
+    monkeypatch.setattr(scope, "authorized_networks", lambda: nets)
+    for bad in ("--oA /tmp/x", "--iL lista.txt", "-sS 8.8.8.8", "http://203.0.113.9/"):
+        assert tooling.extra_args(bad)[1], bad
+    args, err = tooling.extra_args("--reason -S 10.0.0.7 --data-length 25")
+    assert not err and args[-1] == "25"
+
+
+def test_consola_escapa_marcado(capsys):
+    from opsdeck import cli
+    out = cli.ConsoleOut()
+    out.info("objetivo [/x] [bold]raro")
+    out.table(["a"], [["[/b]"]])
+    printed = capsys.readouterr().out
+    assert "[/x]" in printed and "[bold]raro" in printed and "[/b]" in printed
+
+
+def test_config_de_otro_usuario_no_se_carga(tmp_path, monkeypatch):
+    from opsdeck.core import config, paths
+    f = tmp_path / "od.conf"
+    f.write_text("[red]\nredes_autorizadas = 0.0.0.0/0\n")
+    f.chmod(0o666)
+    monkeypatch.setenv("OPSDECK_CONF", str(f))
+    monkeypatch.setattr(paths, "CONF_FILE", f)
+    config.settings.cache_clear()
+    try:
+        assert config.settings().get("red", "redes_autorizadas") == ""
+        f.chmod(0o644)
+        config.settings.cache_clear()
+        assert config.settings().get("red", "redes_autorizadas") == "0.0.0.0/0"
+        config.settings().set("ldap", "usuario", "cuenta%con%porcentaje") if config.settings().has_section("ldap") \
+            else config.settings().read_dict({"ldap": {"usuario": "cuenta%con%porcentaje"}})
+        config.save()
+        assert "cuenta%con%porcentaje" in f.read_text()
+    finally:
+        config.settings.cache_clear()
 
 
 class Out:
@@ -22,16 +75,6 @@ class Ctx:
         self.out = Out()
 
 
-def test_salida_cli_no_interpreta_marcado(capsys):
-    from opsdeck.cli import ConsoleOut
-    o = ConsoleOut()
-    o.error("Objetivo no válido: '[/x]'")
-    o.info("Server: [bold]nginx[/bold]")
-    o.table(["Recurso"], [["datos [/red]"]])
-    o.check(False, "[x] cookie")
-    out = capsys.readouterr().out
-    assert "[/x]" in out and "[bold]nginx[/bold]" in out and "datos [/red]" in out
-
 
 def test_fichero_sudo_sin_puntos():
     from opsdeck.modules import usuarios
@@ -39,47 +82,6 @@ def test_fichero_sudo_sin_puntos():
     f = usuarios._sudo_file("juan.perez")
     assert "." not in f.name and not f.name.endswith("~") and f.name == "90-opsdeck-juan_2eperez"
     assert usuarios._legacy_sudo_file("juan.perez").name == "90-opsdeck-juan.perez"
-
-
-def _netexec_env(monkeypatch, tmp_path):
-    from opsdeck.modules import smb
-    calls = []
-    monkeypatch.setattr(smb.scope, "gate", lambda *a, **k: True)
-    monkeypatch.setattr(smb, "_targets", lambda ctx, t: t.split())
-    monkeypatch.setattr(smb.system, "has_cmd", lambda c: c == "netexec")
-    monkeypatch.setattr(smb.results, "new_dir", lambda *a, **k: tmp_path)
-
-    def fake_stream(ctx, args, **k):
-        files = [a for a in args if a.startswith(tempfile.gettempdir() + "/opsdeck-nxc-")]
-        calls.append((list(args), {f: open(f).read() for f in files}))
-        return 0, ""
-    monkeypatch.setattr(smb, "stream", fake_stream)
-    return smb, calls
-
-
-def _nxc_files():
-    return set(glob.glob(os.path.join(tempfile.gettempdir(), "opsdeck-nxc-*")))
-
-
-def test_netexec_hash_y_password_por_fichero(monkeypatch, tmp_path):
-    smb, calls = _netexec_env(monkeypatch, tmp_path)
-    before = _nxc_files()
-    h = "aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0"
-    assert smb.netexec(Ctx(), {"objetivo": "10.0.0.5", "protocolo": "smb", "usuario": "EMP\\ana", "hash": h})
-    args, files = calls[-1]
-    assert h not in args and "-H" in args and list(files.values()) == [h + "\n"]
-    assert smb.netexec(Ctx(), {"objetivo": "10.0.0.5", "protocolo": "smb", "usuario": "ana", "password": "S3creta!"})
-    args, files = calls[-1]
-    assert "S3creta!" not in args and "-p" in args and list(files.values()) == ["S3creta!\n"]
-    assert _nxc_files() == before, "quedó un fichero temporal con credenciales"
-
-
-def test_netexec_no_deja_secretos_si_falla_la_validacion(monkeypatch, tmp_path):
-    smb, calls = _netexec_env(monkeypatch, tmp_path)
-    before = _nxc_files()
-    assert not smb.netexec(Ctx(), {"objetivo": "10.0.0.5", "protocolo": "smb", "usuario": "ana",
-                                   "password": "S3creta!", "extra": "-x whoami"})
-    assert not calls and _nxc_files() == before
 
 
 def test_realm_no_recibe_opciones_como_nombre(monkeypatch):

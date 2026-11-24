@@ -25,10 +25,6 @@ class Plan:
     unavailable: list[str] = field(default_factory=list)  # no existen en los repositorios
     error: str = ""
 
-    @property
-    def nothing_to_do(self) -> bool:
-        return not self.to_install and not self.unavailable and not self.error
-
     def summary(self) -> str:
         if self.error:
             return f"No se pudo calcular la instalación:\n{self.error}"

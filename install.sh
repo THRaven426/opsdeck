@@ -128,7 +128,7 @@ if [[ "$SRC" != "$DEST" ]]; then
   say "Copiando la herramienta a $DEST"
   mkdir -p "$DEST"
   # se conserva .git (para actualizar) y nunca se copian entornos ni cachés
-  tar -C "$SRC" --exclude=.venv --exclude=__pycache__ --exclude=.pytest_cache -cf - . | tar -C "$DEST" -xf -
+  tar -C "$SRC" --exclude-vcs-ignores --exclude=.venv --exclude=__pycache__ --exclude=.pytest_cache --exclude=.ruff_cache -cf - . | tar -C "$DEST" -xf -
 fi
 chown -R root:root "$DEST"
 chmod -R u=rwX,go=rX "$DEST"
@@ -143,10 +143,9 @@ say "Creando el comando $NAME"
 cat > "$BIN" <<EOF
 #!/bin/sh
 # Lanzador de $NAME: se relanza con sudo si hace falta y usa su entorno Python aislado.
-# Python en modo aislado (-I): ni la carpeta actual ni PYTHON* entran en la ruta de módulos, para
-# que un '$NAME/' o 'rich.py' plantado donde se ejecuta no se cargue como root.
 if [ "\$(id -u)" -ne 0 ]; then exec sudo "\$0" "\$@"; fi
-exec "$DEST/.venv/bin/python" -I -c 'import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); runpy.run_module("$NAME", run_name="__main__", alter_sys=True)' "$DEST" "\$@"
+# -I: aislado; ni el directorio actual ni las variables PYTHON* pueden colar código que se ejecute como root
+exec "$DEST/.venv/bin/python" -I -c 'import sys; sys.path.insert(0, "$DEST"); from $NAME.cli import main; sys.exit(main(sys.argv[1:]))' "\$@"
 EOF
 chmod 755 "$BIN"
 
