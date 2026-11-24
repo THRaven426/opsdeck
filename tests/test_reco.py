@@ -1,5 +1,4 @@
 """Pruebas del motor de recomendación y de la frescura de fuentes."""
-import time
 
 from opsdeck.core import feeds
 from opsdeck.core import recomendacion as R
