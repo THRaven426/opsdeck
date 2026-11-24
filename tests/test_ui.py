@@ -1,5 +1,4 @@
 """Pruebas de la interfaz con el simulador de Textual (sin terminal real)."""
-import asyncio
 import os
 
 import pytest
@@ -148,17 +147,19 @@ async def test_instalar_desde_catalogo_y_aparece_en_menu():
 
 
 async def test_todos_los_formularios_se_abren_y_cierran():
-    """Recorre todos los módulos disponibles y abre el formulario de cada acción con datos."""
-    from opsdeck.core.catalog import AVAILABLE, all_modules
+    """Abre y cierra el formulario de cada acción con datos de todos los módulos.
+
+    No se filtra por disponibilidad: lo disponible depende de la edición y de las herramientas
+    instaladas en el equipo que pasa las pruebas, y el formulario debe abrirse igualmente."""
+    from opsdeck.core.catalog import all_modules
     app = OpsdeckApp()
     opened = 0
+    expected = sum(1 for m in all_modules() for a in m.actions() if a.visible_params())
     async with app.run_test(size=(140, 45)) as pilot:
         await pilot.pause()
         for m in all_modules():
-            if m.status().state != AVAILABLE:
-                continue
             for a in m.actions():
-                if not a.available() or not a.visible_params():
+                if not a.visible_params():
                     continue
                 app.push_screen(FormScreen(m, a))
                 await pilot.pause()
@@ -167,7 +168,7 @@ async def test_todos_los_formularios_se_abren_y_cierran():
                 await pilot.pause()
                 assert app.screen is app.main, f"{m.id}.{a.id} no se cerró"
                 opened += 1
-    assert opened > 40
+    assert opened == expected and opened > 90
 
 
 async def test_resultados_y_grupos():

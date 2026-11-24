@@ -178,24 +178,19 @@ def netexec(ctx: Context, v: dict) -> bool:
     args = [tool, proto, *t, "--threads", str(tooling.int_in(v.get("hilos"), 32, 1, 256)),
             "--timeout", str(tooling.int_in(v.get("espera"), 5, 1, 120))]
     user = (v.get("usuario") or "").strip()
-    pwfile = None
+    secret_flag, secret = "", ""
     if user:
         dom, _, u = user.rpartition("\\")
         args += ["-u", u]
         if dom:
             args += ["-d", dom]
         if v.get("password"):
-            import tempfile
-            fd, pwfile = tempfile.mkstemp(prefix="opsdeck-nxc-")
-            os.write(fd, (v["password"] + "\n").encode())
-            os.close(fd)
-            os.chmod(pwfile, 0o600)
-            args += ["-p", pwfile]       # un fichero: la contraseña no aparece en la lista de procesos
+            secret_flag, secret = "-p", v["password"]
         elif v.get("hash"):
             if not re.match(r"^([0-9a-fA-F]{32}:)?[0-9a-fA-F]{32}$", v["hash"]):
                 ctx.out.error("Hash NT no válido (32 hex, o LM:NT)")
                 return False
-            args += ["-H", v["hash"]]
+            secret_flag, secret = "-H", v["hash"]
         if v.get("local"):
             args.append("--local-auth")
         if v.get("kerberos"):
@@ -216,14 +211,22 @@ def netexec(ctx: Context, v: dict) -> bool:
         ctx.out.error(err)
         return False
     d = results.new_dir("smb", f"netexec_{proto}_{v['objetivo'].replace('/', '_')}")
-    tooling.show_cmd(ctx, args + extra)
+    secret_file = None
     try:
+        if secret:
+            # Contraseña o hash en un fichero privado (netexec acepta ficheros en -p y -H): así no
+            # aparecen en la lista de procesos ni en la orden que se muestra.
+            fd, secret_file = tempfile.mkstemp(prefix="opsdeck-nxc-")
+            os.write(fd, (secret + "\n").encode())
+            os.close(fd)
+            args += [secret_flag, secret_file]
+        tooling.show_cmd(ctx, args + extra)
         rc, _ = stream(ctx, args + extra, accion=f"netexec_{proto}", objetivo=" ".join(t),
                        detalle=f"cuenta={user or ('anonima' if v.get('anonimo') else '-')} {v.get('enumerar', '')} "
                                f"{v.get('modulo', '')}", save_to=d / "netexec.txt")
     finally:
-        if pwfile:
-            os.unlink(pwfile)
+        if secret_file:
+            os.unlink(secret_file)
     ctx.out.info("En cada línea: nombre, dominio, versión, firma (signing) y SMBv1. [+] = credenciales válidas.")
     if v.get("relay") and proto == "smb":
         ctx.out.info(f"Equipos sin firma SMB (candidatos a relay) en {d0 / 'sin_firma.txt'}")
@@ -237,7 +240,6 @@ def enum4linux(ctx: Context, v: dict) -> bool:
     d = results.new_dir("smb", f"enum4linux_{host}")
     args = ["enum4linux-ng", "-A" if not v.get("rapido") else "-As", "-oJ", str(d / "enum4linux")]
     user = (v.get("usuario") or "").strip()
-    env = None
     if user:
         args += ["-u", user]
         if v.get("password"):
@@ -246,7 +248,7 @@ def enum4linux(ctx: Context, v: dict) -> bool:
             args += ["-p", v["password"]]
     args.append(host)
     tooling.show_cmd(ctx, args, hide={args.index("-p") + 1} if "-p" in args else None)
-    rc, _ = stream(ctx, args, accion="enum4linux", objetivo=host, save_to=d / "enum4linux.txt", keep=200, env=env)
+    rc, _ = stream(ctx, args, accion="enum4linux", objetivo=host, save_to=d / "enum4linux.txt", keep=200)
     ctx.out.info(f"Resultado (también en JSON) en {d}")
     return rc == 0
 

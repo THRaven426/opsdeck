@@ -432,6 +432,10 @@ def unir(ctx: Context, v: dict) -> bool:
         if _sssd_short_names(ctx, dom):
             ctx.out.ok("Los usuarios del dominio entran con su nombre corto (jperez en vez de jperez@dominio).")
     groups = [g.strip() for g in (v.get("permitidos") or "").split(",") if g.strip()]
+    bad = [g for g in groups if not GROUP_RE.match(g) or g.startswith("-")]
+    if bad:
+        ctx.out.warn("Se ignoran nombres de grupo no válidos: " + ", ".join(bad))
+        groups = [g for g in groups if g not in bad]
     if groups:
         apply(ctx, "dominio_denegar_todos", dom, ["realm", "deny", "--all"], quiet=True)
         for g in groups:
@@ -451,7 +455,7 @@ def permitir(ctx: Context, v: dict) -> bool:
         ctx.out.error("El equipo no está unido a un dominio.")
         return False
     target, kind = v["nombre"].strip(), v["tipo"]
-    if not GROUP_RE.match(target):
+    if not GROUP_RE.match(target) or target.startswith("-"):
         ctx.out.error("Nombre no válido")
         return False
     if d.get("login-policy") == "allow-realm-logins":
@@ -470,6 +474,9 @@ def retirar(ctx: Context, v: dict) -> bool:
         ctx.out.error("El equipo no está unido a un dominio.")
         return False
     target, kind = v["nombre"].strip(), v["tipo"]
+    if not target or target.startswith("-") or re.search(r"[\x00-\x1f]", target):
+        ctx.out.error("Nombre no válido")
+        return False
     args = ["realm", "permit", "--withdraw"] + (["-g"] if kind == "grupo" else []) + [target]
     ok = apply(ctx, "dominio_retirar", target, args, f"tipo={kind}", quiet=True)
     if ok:
@@ -498,14 +505,14 @@ def sudo_quitar(ctx: Context, v: dict) -> bool:
 
 def probar(ctx: Context, v: dict) -> bool:
     name = v["usuario"].strip()
-    r = system.run(["id", name], c_locale=True, timeout=30)
+    r = system.run(["id", "--", name], c_locale=True, timeout=30)
     ctx.out.check(r.ok, f"id {name}: {r.text}")
     if not r.ok:
         d = joined()
         ctx.out.info("Si es un usuario del dominio, prueba con nombre@" + (d.get("nombre", "dominio")) +
                      " o revisa el estado de sssd en Servicios.")
         return False
-    g = system.run(["getent", "passwd", name], c_locale=True)
+    g = system.run(["getent", "passwd", "--", name], c_locale=True)
     if g.out.strip():
         f = g.out.strip().split(":")
         ctx.out.line(f"    home: {f[5]}  ·  shell: {f[6]}")

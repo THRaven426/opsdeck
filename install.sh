@@ -143,8 +143,10 @@ say "Creando el comando $NAME"
 cat > "$BIN" <<EOF
 #!/bin/sh
 # Lanzador de $NAME: se relanza con sudo si hace falta y usa su entorno Python aislado.
+# Python en modo aislado (-I): ni la carpeta actual ni PYTHON* entran en la ruta de módulos, para
+# que un '$NAME/' o 'rich.py' plantado donde se ejecuta no se cargue como root.
 if [ "\$(id -u)" -ne 0 ]; then exec sudo "\$0" "\$@"; fi
-PYTHONPATH="$DEST" exec "$DEST/.venv/bin/python" -m $NAME "\$@"
+exec "$DEST/.venv/bin/python" -I -c 'import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); runpy.run_module("$NAME", run_name="__main__", alter_sys=True)' "$DEST" "\$@"
 EOF
 chmod 755 "$BIN"
 
@@ -159,7 +161,13 @@ link_for_sudo(){
   case ":$sp:" in *":/usr/local/bin:"*) return 0 ;; esac
   for dir in /usr/sbin /usr/bin /sbin /bin; do
     case ":$sp:" in
-      *":$dir:"*) ln -sf "$BIN" "$dir/$NAME" 2>/dev/null &&
+      *":$dir:"*)
+        # no se pisa un fichero ajeno con el mismo nombre (solo un enlace nuestro anterior)
+        if [[ -e "$dir/$NAME" || -L "$dir/$NAME" ]] && [[ "$(readlink "$dir/$NAME" 2>/dev/null)" != "$BIN" ]]; then
+          warn "sudo no incluye /usr/local/bin en secure_path y ya existe $dir/$NAME: no se toca"
+          return 0
+        fi
+        ln -sf "$BIN" "$dir/$NAME" 2>/dev/null &&
           warn "sudo no incluye /usr/local/bin en secure_path; enlazado también en $dir/$NAME"
           return 0 ;;
     esac
