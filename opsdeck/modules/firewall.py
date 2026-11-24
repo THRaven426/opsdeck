@@ -42,6 +42,20 @@ def active() -> bool:
     return False
 
 
+def _fw() -> list[str]:
+    """firewall-cmd --permanent solo funciona con firewalld en marcha; parado, se usa
+    firewall-offline-cmd, que edita la misma configuración permanente."""
+    if active() or not system.has_cmd("firewall-offline-cmd"):
+        return ["firewall-cmd", "--permanent"]
+    return ["firewall-offline-cmd"]
+
+
+def _reload(ctx) -> bool:
+    if not active():
+        return True
+    return apply(ctx, "firewall_recargar", "firewalld", ["firewall-cmd", "--reload"], quiet=True)
+
+
 def estado(ctx: Context, v: dict) -> bool:
     b = backend()
     ctx.out.title(f"Firewall ({b})")
@@ -70,11 +84,10 @@ def permitir(ctx: Context, v: dict) -> bool:
         if src:
             rule = f'rule family="ipv{ipaddress.ip_network(src, strict=False).version}" source address="{src}" ' \
                    f'port port="{port.replace(":", "-")}" protocol="{proto}" accept'
-            ok = apply(ctx, "firewall_permitir", target, ["firewall-cmd", "--permanent", f"--add-rich-rule={rule}"])
+            ok = apply(ctx, "firewall_permitir", target, _fw() + [f"--add-rich-rule={rule}"])
         else:
-            ok = apply(ctx, "firewall_permitir", target,
-                       ["firewall-cmd", "--permanent", f"--add-port={port.replace(':', '-')}/{proto}"])
-        ok = ok and apply(ctx, "firewall_recargar", "firewalld", ["firewall-cmd", "--reload"], quiet=True)
+            ok = apply(ctx, "firewall_permitir", target, _fw() + [f"--add-port={port.replace(':', '-')}/{proto}"])
+        ok = ok and _reload(ctx)
     if ok:
         ctx.out.ok(f"Permitido {target}.")
         if not active():
@@ -102,14 +115,23 @@ def quitar(ctx: Context, v: dict) -> bool:
             for n, r in rules:
                 ctx.out.line(f"  [{n}] {r}")
             return False
+        remote = {p for p, _ in _remote_ports()}
+        rule_ports = set(re.findall(r"\b(\d{1,5})(?:/(?:tcp|udp))?\b", match[1].split(" ALLOW")[0]))
+        if rule_ports & remote and "ALLOW" in match[1] and not v.get("si_acceso_remoto"):
+            ctx.out.error(f"La regla [{num}] {match[1]} es el acceso remoto de este equipo: quitarla puede dejarte "
+                          "fuera. Si es lo que quieres, marca «Sí, quitar el acceso remoto».")
+            return False
         ok = apply(ctx, "firewall_quitar", match[1], ["ufw", "--force", "delete", num])
     else:
         spec = v["regla"].strip()
         if not re.match(r"^\d{1,5}(-\d{1,5})?/(tcp|udp)$", spec):
             ctx.out.error("Indica el puerto como en la lista: 8080/tcp")
             return False
-        ok = apply(ctx, "firewall_quitar", spec, ["firewall-cmd", "--permanent", f"--remove-port={spec}"]) and \
-            apply(ctx, "firewall_recargar", "firewalld", ["firewall-cmd", "--reload"], quiet=True)
+        if spec.split("/")[0] in {p for p, _ in _remote_ports()} and not v.get("si_acceso_remoto"):
+            ctx.out.error(f"{spec} es el acceso remoto de este equipo (SSH/escritorio remoto): quitarlo puede "
+                          "dejarte fuera. Si es lo que quieres, marca «Sí, quitar el acceso remoto».")
+            return False
+        ok = apply(ctx, "firewall_quitar", spec, _fw() + [f"--remove-port={spec}"]) and _reload(ctx)
     if ok:
         ctx.out.ok("Regla eliminada.")
     return ok
@@ -134,24 +156,98 @@ def listar_reglas(ctx: Context, v: dict) -> bool:
     return True
 
 
-def _remote_ports() -> list[tuple[str, str]]:
-    ports = []
-    listen = system.run(["ss", "-ltnH"], c_locale=True).out if system.has_cmd("ss") else ""
-    local = {l.split()[3].rpartition(":")[2] for l in listen.splitlines() if len(l.split()) > 3}
-    if "22" in local or system.has_cmd("sshd"):
-        ports.append(("22", "SSH"))
-    if "3389" in local or system.has_cmd("xrdp"):
-        ports.append(("3389", "escritorio remoto"))
+def _listening() -> list[tuple[str, str]]:
+    """(puerto, proceso) de los sockets TCP en escucha."""
+    if not system.has_cmd("ss"):
+        return []
+    out = []
+    for line in system.run(["ss", "-ltnpH"], c_locale=True).out.splitlines():
+        f = line.split()
+        if len(f) > 3:
+            m = re.search(r'users:\(\("([^"]+)"', line)
+            out.append((f[3].rpartition(":")[2], m.group(1) if m else ""))
+    return out
+
+
+def _sshd_ports() -> set[str]:
+    ports = set()
+    if system.has_cmd("sshd"):
+        for line in system.run([system.which("sshd"), "-T"], c_locale=True).out.splitlines():
+            if line.startswith("port "):
+                ports.add(line.split()[1])
     return ports
+
+
+def _xrdp_ports() -> set[str]:
+    try:
+        text = open("/etc/xrdp/xrdp.ini", encoding="utf-8", errors="replace").read()
+    except OSError:
+        return set()
+    m = re.search(r"^\s*port\s*=\s*(?:tcp6?://)?[^:\s]*:?(\d{1,5})\s*$", text, re.M)
+    return {m.group(1)} if m else set()
+
+
+def _remote_ports() -> list[tuple[str, str]]:
+    """Puertos por los que se administra este equipo en remoto: los que configuran sshd y xrdp y los
+    que escuchan esos procesos (no se supone el 22: sshd puede estar en el 2222)."""
+    listen = _listening()
+    ssh = _sshd_ports() | {p for p, proc in listen if proc == "sshd" or (proc == "systemd" and p == "22")}
+    if not ssh and system.has_cmd("sshd"):
+        ssh = {"22"}
+    rdp = _xrdp_ports() | {p for p, proc in listen if proc == "xrdp"}
+    if not rdp and system.has_cmd("xrdp"):
+        rdp = {"3389"}
+    return [(p, "SSH") for p in sorted(ssh, key=int)] + [(p, "escritorio remoto") for p in sorted(rdp - ssh, key=int)]
+
+
+def _remote_peers(ports: set[str]) -> set[str]:
+    """IP de origen de las sesiones remotas abiertas ahora en esos puertos."""
+    if not system.has_cmd("ss") or not ports:
+        return set()
+    peers = set()
+    for line in system.run(["ss", "-tnH", "state", "established"], c_locale=True).out.splitlines():
+        f = line.split()
+        if len(f) >= 4 and f[2].rpartition(":")[2] in ports:
+            peers.add(f[3].rpartition(":")[0].strip("[]").removeprefix("::ffff:"))
+    return peers
+
+
+def _locks_out(origin: str, ports: set[str]) -> list[str]:
+    """Sesiones remotas abiertas que quedarían fuera si el acceso se limita a 'origin'."""
+    if not origin:
+        return []
+    try:
+        net = ipaddress.ip_network(origin, strict=False)
+    except ValueError:
+        return []
+    out = []
+    for p in _remote_peers(ports):
+        try:
+            if ipaddress.ip_address(p) not in net:
+                out.append(p)
+        except ValueError:
+            continue
+    return out
 
 
 def activar(ctx: Context, v: dict) -> bool:
     keep = _remote_ports() if v.get("mantener", True) else []
+    origin = (v.get("origen") or "").strip()
+    outside = _locks_out(origin, {p for p, _ in keep})
+    if outside:
+        ctx.out.error(f"Hay sesiones remotas abiertas desde {', '.join(sorted(outside))}, fuera de {origin}: "
+                      "activar así las dejaría fuera. Incluye esas direcciones en el origen.")
+        return False
+    if not keep and _remote_ports():
+        ctx.out.warn("No se deja abierto el acceso remoto: si estás conectado por SSH o RDP, perderás el acceso.")
     for port, what in keep:
         ctx.out.info(f"Dejando abierto {port}/tcp ({what}) antes de activar.")
-        if not permitir(ctx, {"puerto": port, "protocolo": "tcp", "origen": v.get("origen", "")}):
+        if not permitir(ctx, {"puerto": port, "protocolo": "tcp", "origen": origin}):
             ctx.out.error("No se pudo dejar abierto el acceso remoto; no se activa el firewall.")
             return False
+    if origin and keep:
+        ctx.out.warn(f"Las reglas que ya existieran para esos puertos siguen vigentes (en firewalld, el servicio "
+                     f"«ssh» de la zona): revisa «Reglas» si el acceso debe quedar solo desde {origin}.")
     if backend() == "ufw":
         ok = apply(ctx, "firewall_activar", "ufw", ["ufw", "--force", "enable"])
     else:
@@ -174,7 +270,7 @@ def desactivar(ctx: Context, v: dict) -> bool:
 def _activate_confirm(v: dict) -> str:
     keep = _remote_ports() if v.get("mantener", True) else []
     kept = ", ".join(f"{p} ({w})" for p, w in keep) or "ninguno"
-    src = f" solo desde {v['origen']}" if v.get("origen") else ""
+    src = f" desde {v['origen']}" if v.get("origen") else ""
     return (f"Se activará el firewall. Se dejarán abiertos{src}: {kept}. Todo lo demás que no tenga una regla "
             "quedará bloqueado desde la red. ¿Continuar?")
 
@@ -194,8 +290,10 @@ de firewall propia de la distribución: **ufw** en Debian/Ubuntu/Kali y **firewa
 - **Permitir un puerto**: abre un puerto, para todos o solo desde una IP/red concreta
   (recomendado: p. ej. el RDP solo desde la red de administración).
 - **Quitar una regla**: en ufw, por su número de la lista.
-- **Activar**: antes de activarlo **deja abiertos SSH (22) y escritorio remoto (3389)** si están en uso,
-  para que no te quedes fuera. Puedes limitar ese acceso a un origen.
+- **Activar**: antes de activarlo **deja abiertos los puertos de SSH y escritorio remoto** que use este
+  equipo (los lee de sshd y xrdp: no supone el 22 ni el 3389), para que no te quedes fuera. Puedes
+  limitar ese acceso a un origen; si hay sesiones remotas abiertas desde fuera de ese origen, no se
+  activa.
 - **Desactivar**: deja todo accesible; úsalo solo para pruebas.
 
 Si no hay ninguna herramienta de firewall instalada, el catálogo ofrece instalar la recomendada.
@@ -221,7 +319,9 @@ Si no hay ninguna herramienta de firewall instalada, el catálogo ofrece instala
                 Param("protocolo", "Protocolo", "choice", "tcp", choices=[("tcp", "TCP"), ("udp", "UDP")]), src]),
             Action("quitar", "Quitar una regla", quitar, changes=True, params=[
                 Param("regla", "Número de regla (ufw) o puerto/protocolo (firewalld)",
-                      help="Míralo antes en 'Ver reglas'.")],
+                      help="Míralo antes en 'Ver reglas'."),
+                Param("si_acceso_remoto", "Sí, quitar el acceso remoto (SSH/RDP)", "bool", False, required=False,
+                      advanced=True, help="Puedes perder la conexión con este equipo.")],
                 confirm="Se eliminará la regla {regla}. ¿Continuar?"),
             Action("activar", "Activar firewall", activar, changes=True, params=[
                 Param("mantener", "Dejar abiertos SSH y escritorio remoto", "bool", True, required=False), src],

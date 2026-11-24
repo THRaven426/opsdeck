@@ -181,42 +181,54 @@ class _Span:
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9\[][A-Za-z0-9._:/@?#=&%\[\]-]*$")
 
 
-def target_file_problem(path: Path) -> Optional[str]:
-    """Motivo por el que no se acepta una lista de objetivos, o None. Se lee como root y nmap la
-    vuelve a leer después: solo vale si es de root o del operador y nadie más puede modificarla."""
+def _list_owners() -> set[int]:
+    owners = {0, os.geteuid()}
     try:
-        st = path.stat()
-    except OSError as e:
-        return f"no se puede leer la lista {path}: {e.strerror}"
-    try:
-        owner_ok = st.st_uid in (0, os.geteuid(), pwd.getpwnam(system.operator()).pw_uid)
+        owners.add(pwd.getpwnam(system.operator()).pw_uid)
     except KeyError:
-        owner_ok = st.st_uid in (0, os.geteuid())
-    if not owner_ok or st.st_mode & 0o022:
-        return f"la lista {path} es de otro usuario o la pueden modificar otros"
-    return None
+        pass
+    return owners
+
+
+def read_target_file(path) -> tuple[list[str], str]:
+    """(objetivos, problema) de una lista en fichero. Se lee una sola vez, sin seguir enlaces, solo si
+    es de root o del operador y nadie más puede modificarla, y cada entrada debe tener forma de
+    objetivo. Las herramientas reciben después la lista ya validada, no el fichero."""
+    from .safeio import UnsafeFile, read_text
+    try:
+        st = os.lstat(path)
+        operator_uid = pwd.getpwnam(system.operator()).pw_uid
+    except (OSError, KeyError):
+        st, operator_uid = None, 0
+    if st is not None and operator_uid not in (0, st.st_uid) and not st.st_mode & 0o004:
+        return [], f"no se usa la lista {path}: tú no podrías leerla sin la herramienta"
+    try:
+        text = read_text(path, owners=_list_owners(), no_group_write=True)
+    except UnsafeFile as e:
+        return [], f"no se usa la lista: {e}"
+    except OSError as e:
+        return [], f"no se puede leer la lista {path}: {e.strerror}"
+    specs = [t for line in text.splitlines() if not line.strip().startswith("#") for t in line.split()]
+    bad = sum(1 for t in specs if not _TOKEN_RE.match(t))
+    if bad:
+        return [], f"la lista {path} tiene {bad} entrada(s) que no son objetivos válidos"
+    if not specs:
+        return [], f"la lista {path} está vacía"
+    return specs, ""
+
+
+def is_target_file(text: str) -> bool:
+    toks = (text or "").split()
+    return len(toks) == 1 and (Path(toks[0]).is_file() or Path(toks[0]).is_symlink())
 
 
 def _specs_from_text(text: str) -> tuple[list[str], list[str]]:
     """(objetivos, problemas). Una lista en fichero se valida línea a línea y nunca se repite su
     contenido si no tiene forma de objetivo (podría ser cualquier fichero del sistema)."""
-    toks = text.split()
-    if len(toks) == 1:
-        p = Path(toks[0])
-        if p.is_file():
-            problem = target_file_problem(p)
-            if problem:
-                return [], [problem]
-            try:
-                lines = p.read_text(errors="replace").splitlines()
-            except OSError as e:
-                return [], [f"no se puede leer la lista {p}: {e.strerror}"]
-            specs = [t for line in lines if not line.strip().startswith("#") for t in line.split()]
-            bad = sum(1 for t in specs if not _TOKEN_RE.match(t))
-            if bad:
-                return [], [f"la lista {p} tiene {bad} entrada(s) que no son objetivos válidos"]
-            return specs, []
-    return toks, []
+    if is_target_file(text):
+        specs, problem = read_target_file(text.strip())
+        return specs, [problem] if problem else []
+    return text.split(), []
 
 
 @dataclass

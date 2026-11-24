@@ -66,7 +66,11 @@ def settings() -> configparser.ConfigParser:
 
 
 def save() -> None:
-    """Escritura atómica: un fallo a mitad no deja la configuración vacía."""
+    """Escritura atómica: un fallo a mitad no deja la configuración vacía. Si el fichero actual se
+    ignoró por inseguro no se sobrescribe: se perderían la edición y las redes autorizadas."""
+    if paths.CONF_FILE.exists() and not _safe(paths.CONF_FILE):
+        raise PermissionError(f"{paths.CONF_FILE} no es de root o lo pueden modificar otros: corrígelo "
+                              f"(chown root:root, chmod 644) antes de guardar cambios")
     cfg = settings()
     paths.CONF_FILE.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=paths.CONF_FILE.parent, prefix=".conf-")

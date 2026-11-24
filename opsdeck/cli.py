@@ -101,7 +101,7 @@ def cmd_modulos() -> int:
         opt = m.missing_optional() if st.state == AVAILABLE else []
         if opt:
             detail = (detail or m.summary) + f"  (+{len(opt)} opcionales: {NAME} instalar {m.id} --opcionales)"
-        t.add_row(f"{m.id} ({m.name})", m.category, f"[{color}]{st.state}[/]", detail or m.summary)
+        t.add_row(f"{m.id} ({m.name})", m.category, f"[{color}]{st.state}[/]", escape(detail or m.summary))
     console.print(t)
     return 0
 
@@ -161,7 +161,7 @@ def cmd_edicion() -> int:
         ok, why = edition.allowed_full()
         console.print(f"Grupo con acceso a los módulos avanzados: {edition.group()} → "
                       f"{', '.join(g.gr_mem) if g and g.gr_mem else '(sin miembros)'}")
-        console.print(f"Tú ({system.operator()}): " + ("[green]con acceso[/]" if ok else f"[yellow]{why}[/]"))
+        console.print(f"Tú ({system.operator()}): " + ("[green]con acceso[/]" if ok else f"[yellow]{escape(why)}[/]"))
         console.print(f"Dar acceso a alguien: {NAME} usuarios grupo_add <usuario> --grupo {edition.group()}")
     else:
         console.print("Incluye la administración diaria y análisis básico. Para la completa: "
@@ -179,7 +179,7 @@ def cmd_instalar_todo(yes: bool, opcionales: bool = False) -> int:
     console.print("Módulos a completar: " + ", ".join(m.name for m in mods))
     pm.refresh(lambda l: console.print(l, markup=False, style="dim"))
     plan = pm.plan(pkgs)
-    console.print("\n" + plan.summary())
+    console.print("\n" + plan.summary(), markup=False)
     if plan.error or not plan.to_install:
         return 1 if plan.error else 0
     if not yes and not _ask_yes("¿Desea continuar?"):
@@ -210,10 +210,10 @@ def cmd_instalar(args: list[str], yes: bool, opcionales: bool = False) -> int:
                           f"{NAME} instalar {m.id} --opcionales")
         return 0
     if st.state not in (AVAILABLE, INSTALLABLE):
-        console.print(f"[red]{m.name}: {st.reason}[/]")
+        console.print(f"[red]{m.name}: {escape(st.reason)}[/]")
         return 1
     plan = installer.prepare(m, lambda l: console.print(l, markup=False, style="dim"), opcionales)
-    console.print("\n" + plan.summary())
+    console.print("\n" + plan.summary(), markup=False)
     if plan.error or not plan.to_install:
         return 1 if plan.error else 0
     if not yes and not _ask_yes("¿Desea continuar?"):
@@ -262,11 +262,19 @@ def cmd_autoactualizar(yes: bool) -> int:
     if not system.has_cmd("git"):
         console.print("Falta git: instálalo (apt install git) o actualiza con install.sh.")
         return 1
-    fetch = system.run(["git", "-C", str(repo), "fetch", "--quiet"])
+    # Como root, git no debe ejecutar nada del repositorio: ni hooks, ni fsmonitor, ni otro ssh.
+    git = ["git", "-C", str(repo), "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+           "-c", "core.sshCommand=ssh", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always"]
+    url = system.run(git + ["remote", "get-url", "origin"]).out.strip()
+    if not url.startswith("https://"):
+        console.print(f"El repositorio de origen no es https ({escape(url) or 'sin origen'}): se actualiza solo "
+                      "desde https. Descarga la versión nueva y ejecuta install.sh.")
+        return 1
+    fetch = system.run(git + ["fetch", "--quiet", "origin"])
     if not fetch.ok:
         console.print("No se pudo consultar el repositorio remoto:\n" + escape(fetch.text))
         return 1
-    log = system.run(["git", "-C", str(repo), "log", "--oneline", "HEAD..@{u}"])
+    log = system.run(git + ["log", "--oneline", "HEAD..@{u}"])
     if not log.ok:
         console.print("La instalación no sigue ninguna rama remota:\n" + escape(log.text))
         return 1
@@ -278,15 +286,27 @@ def cmd_autoactualizar(yes: bool) -> int:
     if not yes and not _ask_yes("¿Actualizar ahora?"):
         console.print("Cancelado.")
         return 1
-    r = system.run(["git", "-C", str(repo), "pull", "--ff-only"])
+    before = system.run(git + ["rev-parse", "HEAD"]).out.strip()
+    r = system.run(git + ["merge", "--ff-only", "@{u}"])
     console.print(r.text, markup=False)
     if not r.ok:
         return 1
+    changed = system.run(git + ["diff", "--name-only", before, "HEAD"]).out.split()
     pip = repo / ".venv" / "bin" / "pip"
     if pip.exists():
-        system.run([str(pip), "install", "-q", "-r", str(repo / "requirements.txt")], timeout=600)
+        r = system.run([str(pip), "install", "-q", "--require-hashes", "--no-deps", "-r", str(repo / "requirements.txt")],
+                       timeout=600)
+        if not r.ok:
+            system.run(git + ["reset", "--hard", "--quiet", before])
+            console.print("No se pudieron instalar las dependencias (¿hash distinto o sin red?):\n" + escape(r.text)
+                          + f"\nSe ha vuelto a la versión anterior ({before[:10]}).")
+            audit.record("autoactualizar", NAME, "REVERTIDO", "fallaron las dependencias")
+            return 1
     audit.record("autoactualizar", NAME, "OK", behind.splitlines()[0] if behind else "")
     console.print(f"[green]{NAME} actualizado.[/]")
+    if "install.sh" in changed:
+        console.print(f"[yellow]El instalador ha cambiado: ejecuta {escape(str(repo / 'install.sh'))} para aplicar "
+                      "los cambios del lanzador y de los permisos.[/]")
     return 0
 
 
@@ -382,7 +402,7 @@ def main(argv: list[str]) -> int:
         return 2
     st = m.status()
     if st.state != AVAILABLE:
-        console.print(f"[yellow]{m.name} no está disponible: {st.reason}[/]" +
+        console.print(f"[yellow]{m.name} no está disponible: {escape(st.reason)}[/]" +
                       (f"\nPuedes instalarlo con: {NAME} instalar {m.id}" if st.state == INSTALLABLE else ""))
         return 1
     pos = values.get("_pos", [])

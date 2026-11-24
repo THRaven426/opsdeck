@@ -8,7 +8,13 @@ from ..core import system
 from ..core.catalog import Action, Context, Module, Param, file
 from ..core.ops import apply
 
-UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]+$")
+UNIT_RE = re.compile(r"^[A-Za-z0-9@_:][A-Za-z0-9@._:\\-]*$")     # nunca empieza por «-» (sería una opción)
+# Unidades que no se tocan desde aquí: apagan, reinician o dejan el equipo sin sesiones ni registros
+PROTECTED = {"reboot.target", "poweroff.target", "halt.target", "kexec.target", "shutdown.target",
+             "rescue.target", "emergency.target", "ctrl-alt-del.target", "soft-reboot.target", "final.target",
+             "dbus.service", "dbus.socket", "dbus-broker.service", "systemd-logind.service",
+             "systemd-journald.service", "systemd-journald.socket", "systemd-udevd.service", "init.scope",
+             "-.slice", "system.slice"}
 # Servicios cuya parada puede cortar el acceso de quien está usando la herramienta
 REMOTE_ACCESS = ("ssh", "sshd", "xrdp", "xrdp-sesman", "networking", "NetworkManager", "systemd-networkd")
 
@@ -28,8 +34,8 @@ def _valid(ctx, name) -> str:
         ctx.out.error("Nombre de servicio no válido")
         return ""
     u = unit_name(name)
-    if not system.run(["systemctl", "list-unit-files", u, "--no-legend"], c_locale=True).out.strip() and \
-            not system.run(["systemctl", "status", u], c_locale=True).out.strip():
+    if not system.run(["systemctl", "list-unit-files", "--no-legend", "--", u], c_locale=True).out.strip() and \
+            not system.run(["systemctl", "status", "--", u], c_locale=True).out.strip():
         ctx.out.error(f"No existe el servicio '{name}'")
         return ""
     return u
@@ -73,7 +79,7 @@ def estado(ctx: Context, v: dict) -> bool:
     u = _valid(ctx, v["servicio"])
     if not u:
         return False
-    st = system.run(["systemctl", "status", "--no-pager", "-n", "0", u], c_locale=True)
+    st = system.run(["systemctl", "status", "--no-pager", "-n", "0", "--", u], c_locale=True)
     for line in st.out.splitlines()[:12]:
         ctx.out.line(line)
     ctx.out.title(f"Últimas {v.get('lineas', 30)} líneas de registro")
@@ -88,18 +94,23 @@ def _control(verb: str, label: str):
         u = _valid(ctx, v["servicio"])
         if not u:
             return False
-        ok = apply(ctx, f"servicio_{verb}", u, ["systemctl", verb, u])
+        if u in PROTECTED or (u.endswith(".target") and verb in ("start", "restart")):
+            ctx.out.error(f"'{u}' no se maneja desde aquí: apagaría, reiniciaría o dejaría el equipo sin "
+                          "servicios básicos. Hazlo a mano si de verdad es lo que quieres.")
+            return False
+        ok = apply(ctx, f"servicio_{verb}", u, ["systemctl", verb, "--", u])
         if ok:
-            state = system.run(["systemctl", "is-active", u], c_locale=True).out.strip()
-            boot = system.run(["systemctl", "is-enabled", u], c_locale=True).out.strip()
+            state = system.run(["systemctl", "is-active", "--", u], c_locale=True).out.strip()
+            boot = system.run(["systemctl", "is-enabled", "--", u], c_locale=True).out.strip()
             ctx.out.ok(f"{u}: {label}. Ahora: {state}, al arrancar: {boot}")
         return ok
     return run
 
 
 def _confirm_stop(v: dict) -> str:
-    name = v.get("servicio", "").removesuffix(".service")
-    if name in REMOTE_ACCESS:
+    name = v.get("servicio", "").strip()
+    base = name.rsplit(".", 1)[0] if name.endswith((".service", ".socket")) else name
+    if base in REMOTE_ACCESS:
         return (f"'{name}' da acceso remoto o red a este equipo. Si estás conectado a través de él, "
                 "PERDERÁS LA CONEXIÓN. ¿Continuar?")
     return f"Se detendrá/reiniciará '{name}'. ¿Continuar?"

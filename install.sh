@@ -132,20 +132,34 @@ if [[ "$SRC" != "$DEST" ]]; then
 fi
 chown -R root:root "$DEST"
 chmod -R u=rwX,go=rX "$DEST"
+if [[ -d "$DEST/.git" ]]; then
+  # Un clon de usuario puede traer hooks o configuración que git ejecutaría como root al actualizar
+  rm -rf "$DEST/.git/hooks"
+  for k in core.hooksPath core.fsmonitor core.sshCommand core.pager core.editor credential.helper; do
+    git -C "$DEST" config --unset-all "$k" 2>/dev/null || true
+  done
+  chmod -R go-rwx "$DEST/.git"        # .git/config puede llevar un token si se clonó con usuario:token
+fi
 chmod 755 "$DEST/install.sh" "$DEST/uninstall.sh"
 
 say "Creando el entorno Python"
 python3 -m venv "$DEST/.venv"
-"$DEST/.venv/bin/pip" install -q --upgrade pip
-"$DEST/.venv/bin/pip" install -q -r "$DEST/requirements.txt"
+# Versiones y hashes fijados: pip rechaza cualquier paquete que no coincida (se instala como root)
+"$DEST/.venv/bin/pip" install -q --require-hashes --no-deps -r "$DEST/requirements.txt"
 
 say "Creando el comando $NAME"
 cat > "$BIN" <<EOF
 #!/bin/sh
 # Lanzador de $NAME: se relanza con sudo si hace falta y usa su entorno Python aislado.
 if [ "\$(id -u)" -ne 0 ]; then exec sudo "\$0" "\$@"; fi
-# -I: aislado; ni el directorio actual ni las variables PYTHON* pueden colar código que se ejecute como root
-exec "$DEST/.venv/bin/python" -I -c 'import sys; sys.path.insert(0, "$DEST"); from $NAME.cli import main; sys.exit(main(sys.argv[1:]))' "\$@"
+# Entorno limpio: ni el directorio actual (-I), ni PYTHON*, ni el PATH, HOME u OPSDECK_* del usuario
+# pueden hacer que root cargue o ejecute algo suyo (un «nmap» en ~/bin, plantillas en ~/.config...).
+exec env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root \
+  TERM="\${TERM:-xterm}" COLORTERM="\${COLORTERM:-}" LANG="\${LANG:-C.UTF-8}" LC_ALL="\${LC_ALL:-}" \
+  SUDO_USER="\${SUDO_USER:-}" SUDO_UID="\${SUDO_UID:-}" \
+  http_proxy="\${http_proxy:-}" https_proxy="\${https_proxy:-}" no_proxy="\${no_proxy:-}" \
+  HTTP_PROXY="\${HTTP_PROXY:-}" HTTPS_PROXY="\${HTTPS_PROXY:-}" NO_PROXY="\${NO_PROXY:-}" \
+  "$DEST/.venv/bin/python" -I -c 'import sys; sys.path.insert(0, "$DEST"); from $NAME.cli import main; sys.exit(main(sys.argv[1:]))' "\$@"
 EOF
 chmod 755 "$BIN"
 

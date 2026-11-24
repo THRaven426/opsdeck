@@ -14,18 +14,98 @@ from typing import Optional
 
 from .catalog import Param
 
-# Opciones que ninguna herramienta puede recibir como «extra»: salida y listas de objetivos
-# (la salida la gestiona opsdeck; las listas de objetivos pasan por la barandilla de alcance).
+# Opciones que ninguna herramienta puede recibir como «extra»: salida, listas de objetivos y todo lo
+# que haga leer, cargar o ejecutar ficheros (la herramienta corre como root). La salida la gestiona
+# opsdeck; las listas de objetivos pasan por la barandilla de alcance.
 COMMON_FORBIDDEN = ("-o", "--output", "-oA", "-oN", "-oX", "-oG", "-oJ", "-oS", "-iL", "-l", "--list",
-                    "-iR", "--resume", "--datadir", "--script-updatedb", "--stylesheet")
+                    "-iR", "--resume", "--datadir", "--script-updatedb", "--stylesheet", "--script-args-file",
+                    "--excludefile", "--servicedb", "--versiondb", "--openssl", "--plugins", "--log-file",
+                    "--logfile", "--jsonfile", "--csvfile", "--htmlfile", "--outfile", "--config", "--env-vars")
+
+# Opciones legítimas que son prefijo de una prohibida (getopt y argparse aceptan abreviaturas).
+_ABBREV_OK = {"data", "script", "script-args", "exclude", "open", "version", "output-mode", "plugin"}
+# Extensiones de ficheros de código o de datos que una herramienta podría cargar
+_FILE_EXT = re.compile(r"\.(nse|lua|rb|py|pl|sh|so|yaml|yml|json|txt|lst|conf|cfg|xml|csv|log|db|ini|js)$", re.I)
+_IPV4ISH = re.compile(r"^[\d*,\-]+(\.[\d*,\-]+){3}(/\d{1,2})?$")
+_HOSTISH = re.compile(r"^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z][A-Za-z0-9-]*\.?$")
 
 HEADER_RE = re.compile(r"^[A-Za-z0-9-]{1,64}:\s?[^\r\n]{0,512}$")
 PROXY_RE = re.compile(r"^(https?|socks5h?|socks4)://[A-Za-z0-9._:@%-]+(:\d{1,5})?/?$")
 CSV_RE = re.compile(r"^[A-Za-z0-9_.,/:*-]*$")
 
 
+def _forbidden_name(token: str, forbidden: tuple[str, ...]) -> bool:
+    """¿Es una opción prohibida, en cualquiera de las formas que aceptan las herramientas?
+    -x y --x (nmap y nuclei aceptan las dos), pegada a su valor (-iLlista, -oNfichero, -ofichero) y
+    abreviada (--resum, --datad: getopt y argparse completan el nombre)."""
+    name = token.split("=", 1)[0]
+    canon = name.lstrip("-")
+    double = name.startswith("--")
+    for f in forbidden:
+        fc = f.lstrip("-")
+        if canon == fc:
+            return True
+        if len(fc) >= 2 and fc[-1].isupper() and canon.startswith(fc):
+            return True
+        if len(fc) == 1 and not double and canon.startswith(fc):
+            return True
+        if double and len(canon) >= 3 and len(fc) > len(canon) and fc.startswith(canon) and canon not in _ABBREV_OK:
+            return True
+    return False
+
+
+def _bad_value(value: str) -> str:
+    """Motivo si un valor apunta a un fichero (ruta, ~, .., extensión de código o datos); '' si no."""
+    if not value:
+        return ""
+    if "://" in value:
+        return "" if re.match(r"^(https?|socks[45]h?)://", value, re.I) else "esquema no permitido"
+    if value.startswith("~") or ".." in value:
+        return "rutas no permitidas"
+    if "/" in value:
+        from .scope import _ip_bounds
+        return "" if _ip_bounds(value) is not None else "rutas no permitidas"
+    if _FILE_EXT.search(value):
+        return "ficheros no permitidos"
+    return ""
+
+
+def script_args_problem(text: str) -> str:
+    """Motivo si algún valor de --script-args señala a un fichero (userdb=/etc/shadow lo leería
+    como root). Se admiten agentes de usuario tipo «Mozilla/5.0»."""
+    for part in re.split(r"[,{}]", text or ""):
+        value = part.split("=", 1)[1].strip() if "=" in part else ""
+        if re.match(r"^[A-Za-z][\w.-]*/[\w.()-]+$", value):
+            continue
+        why = _bad_value(value)
+        if why:
+            return f"{why}: {part.strip()}"
+    return ""
+
+
+def _looks_like_target(token: str) -> bool:
+    """Un valor suelto que una herramienta podría tomar como objetivo adicional."""
+    from .scope import _ip_bounds
+    if "=" in token:
+        return False
+    if "://" in token or _ip_bounds(token) is not None or _IPV4ISH.match(token):
+        return True
+    if token.isdigit() and int(token) > 0xFFFFFF:      # nmap acepta una IPv4 escrita como entero
+        return True
+    return bool(_HOSTISH.match(token))
+
+
+def _in_scope(token: str) -> bool:
+    from .scope import classify, host_of
+    if _IPV4ISH.match(token) and not classify(token).dentro:
+        return False
+    return classify(host_of(token)).ok
+
+
 def extra_args(text: str, forbidden: tuple[str, ...] = COMMON_FORBIDDEN) -> tuple[list[str], str]:
-    """Convierte el texto de «opciones adicionales» en argumentos. Devuelve (argumentos, error)."""
+    """Convierte el texto de «opciones adicionales» en argumentos. Devuelve (argumentos, error).
+    Nunca se pasan por una shell. Se rechazan las opciones prohibidas, los valores que señalan a
+    ficheros y las direcciones o nombres fuera del alcance (se tratarían como objetivos extra)."""
     text = (text or "").strip()
     if not text:
         return [], ""
@@ -33,37 +113,33 @@ def extra_args(text: str, forbidden: tuple[str, ...] = COMMON_FORBIDDEN) -> tupl
         args = shlex.split(text)
     except ValueError as e:
         return [], f"Opciones mal escritas: {e}"
-    bad, outside = [], []
-    for a in args:
-        if not a.startswith("-"):
-            if _looks_like_target(a) and not _in_scope(a):
-                outside.append(a)
+    bad, files, outside = [], [], []
+    for i, a in enumerate(args):
+        if i and args[i - 1] == "--script-args" and not a.startswith("-"):
+            if script_args_problem(a):
+                files.append(a)
             continue
-        name = a.split("=", 1)[0]
-        # nmap y nuclei aceptan también la forma larga con dos guiones («--oA», «--iL», «--u»)
-        names = {name, "-" + name[2:]} if name.startswith("--") else {name}
-        for f in forbidden:
-            # coincidencia exacta, o forma pegada («-oX», «-ofichero») solo para opciones de una letra
-            if f in names or (len(f) == 2 and not f.startswith("--") and name.startswith(f) and not name.startswith("--")):
+        if a.startswith("-"):
+            if _forbidden_name(a, forbidden):
                 bad.append(a)
-                break
+                continue
+            value = a.split("=", 1)[1] if "=" in a else ""
+        else:
+            value = a
+        if _bad_value(value) or (a.startswith("--script-args=") and script_args_problem(value)):
+            files.append(a)
+        elif not a.startswith("-") and _looks_like_target(a) and not _in_scope(a):
+            outside.append(a)
     if bad:
-        return [], ("No se permiten estas opciones (la salida y las listas de objetivos las gestiona opsdeck): "
-                    + " ".join(bad))
+        return [], ("No se permiten estas opciones (la salida, las listas de objetivos y la carga de ficheros "
+                    "las gestiona opsdeck): " + " ".join(bad))
+    if files:
+        return [], ("No se permiten rutas ni ficheros en las opciones adicionales (la herramienta se ejecuta "
+                    "como root): " + " ".join(files))
     if outside:
-        return [], ("Las opciones incluyen direcciones fuera del alcance autorizado (se tratarían como objetivos "
-                    "que no pasan por la barandilla): " + " ".join(outside))
+        return [], ("Las opciones incluyen equipos o direcciones fuera del alcance autorizado (se tratarían "
+                    "como objetivos que no pasan por la barandilla): " + " ".join(outside))
     return args, ""
-
-
-def _looks_like_target(token: str) -> bool:
-    from .scope import _ip_bounds
-    return "://" in token or _ip_bounds(token) is not None
-
-
-def _in_scope(token: str) -> bool:
-    from .scope import classify
-    return classify(token).ok
 
 
 def int_in(v, default: int, lo: int, hi: int) -> int:
@@ -139,7 +215,27 @@ def p_useragent(default: str = "") -> Param:
                  help="Vacío = el de la herramienta. Útil si un WAF bloquea agentes de escáneres.")
 
 
+_SECRET_HEADER = re.compile(r"^\s*(authorization|proxy-authorization|cookie|x-api-key|x-auth-token|api-key|"
+                            r"x-access-token|token)\s*:", re.I)
+
+
+def redact(args: list[str], hide: Optional[set[int]] = None) -> list[str]:
+    """La orden sin secretos, para pantalla, auditoría y orden.txt: cabeceras de credenciales,
+    usuario:clave de un proxy o URL y las posiciones indicadas en 'hide'."""
+    out = []
+    for i, a in enumerate(args):
+        if hide and i in hide:
+            a = "***"
+        elif _SECRET_HEADER.match(a):
+            a = a.split(":", 1)[0] + ": ***"
+        else:
+            a = re.sub(r"(://)[^/@\s]+@", r"\1***@", a)
+            a = re.sub(r"((?:pass|password|passwd|secret|token|apikey|api_key)\s*=\s*)[^,}\s]+", r"\1***", a, flags=re.I)
+        out.append(a)
+    return out
+
+
 def show_cmd(ctx, args: list[str], hide: Optional[set[int]] = None) -> None:
     """Muestra la orden que se va a lanzar (sin secretos: posiciones en 'hide' se ocultan)."""
-    shown = [("***" if hide and i in hide else a) for i, a in enumerate(args)]
+    shown = redact(args, hide)
     ctx.out.info("$ " + " ".join(shlex.quote(a) for a in shown))

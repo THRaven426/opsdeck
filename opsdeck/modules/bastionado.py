@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
-from ..core import audit, results, system
+from ..core import audit, results, safeio, system
 from ..core.catalog import Action, Context, Module, Param, cmd
 from ..core.ops import stream
 
@@ -49,8 +50,12 @@ def auditar(ctx: Context, v: dict) -> bool:
         args.remove("--quick")
     perfil = (v.get("perfil") or "").strip()
     if perfil:
-        if not Path(perfil).is_file():
-            ctx.out.error(f"No existe el perfil {perfil}")
+        try:
+            os.close(safeio.open_regular(perfil, owners=(0,), no_group_write=True))
+        except OSError as e:
+            # un perfil de Lynis puede cargar plugins (código que se ejecuta como root)
+            ctx.out.error(f"No se usa el perfil {perfil}: tiene que ser un fichero de root que nadie más pueda "
+                          f"modificar ({e})")
             return False
         args += ["--profile", perfil]
     ctx.out.info("Auditando el sistema con Lynis (unos minutos)...")

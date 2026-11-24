@@ -5,7 +5,6 @@ conexiones, después configuración y registros) y genera un manifiesto con SHA-
 
 from __future__ import annotations
 
-import hashlib
 import os
 import shutil
 import tarfile
@@ -13,10 +12,11 @@ import time
 from pathlib import Path
 
 from ..core import accounts as acc
-from ..core import audit, results, system
+from ..core import audit, results, safeio, system
 from ..core.catalog import Action, Context, Module, Param
 
 SUSPICIOUS_DIRS = ("/tmp/", "/dev/shm/", "/var/tmp/", "/run/user/")
+MAX_EVIDENCE = 200 * 1024 * 1024
 
 
 def _recent(p: Path, days: int) -> bool:
@@ -33,8 +33,20 @@ def _when(p: Path) -> str:
         return "?"
 
 
+def _read(p: Path) -> str:
+    """Contenido (hasta 1 MB) sin seguir enlaces ni bloquearse en FIFOs o dispositivos; '' si no se
+    puede leer de forma segura. Muchos de estos ficheros los controla un usuario."""
+    try:
+        return safeio.read_text(p)
+    except OSError:
+        return ""
+
+
 def _owner_pkg(path: str) -> str:
-    """Paquete al que pertenece el fichero ('' si no es de ningún paquete)."""
+    """Paquete al que pertenece el fichero ('' si no es de ningún paquete; '?' si no se puede saber).
+    dpkg-query trata la ruta como patrón: una ruta con comodines no se consulta."""
+    if any(c in path for c in "*?[]\\"):
+        return ""
     if system.has_cmd("dpkg-query"):
         # con /usr fusionado dpkg puede tener registrado /bin/x en lugar de /usr/bin/x (y al revés)
         alt = path[4:] if path.startswith(("/usr/bin/", "/usr/sbin/", "/usr/lib/")) else \
@@ -69,7 +81,7 @@ def persistence(days: int) -> list[list[str]]:
     for p in [Path("/etc/crontab"), *Path("/etc/cron.d").glob("*"), *Path("/var/spool/cron/crontabs").glob("*"),
               *Path("/var/spool/cron").glob("*")]:
         if p.is_file():
-            lines = [l for l in p.read_text(errors="replace").splitlines() if l.strip() and not l.startswith("#")
+            lines = [l for l in _read(p).splitlines() if l.strip() and not l.startswith("#")
                      and "=" not in l.split()[0]]
             for l in lines:
                 add("cron", p, l, any(s in l for s in SUSPICIOUS_DIRS) or "curl" in l or "wget" in l or "base64" in l)
@@ -83,7 +95,7 @@ def persistence(days: int) -> list[list[str]]:
             continue
         for p in base.rglob("*"):
             if p.is_file() and p.suffix in (".service", ".timer", ".socket", ".path") and not p.is_symlink():
-                exec_line = next((l for l in p.read_text(errors="replace").splitlines() if l.startswith("ExecStart")), "")
+                exec_line = next((l for l in _read(p).splitlines() if l.startswith("ExecStart")), "")
                 pkg = _owner_pkg(str(p)) if base == Path("/etc/systemd/system") else ""
                 if not pkg:
                     add("systemd", p, exec_line, any(s in exec_line for s in SUSPICIOUS_DIRS))
@@ -98,12 +110,14 @@ def persistence(days: int) -> list[list[str]]:
                 add("shell de usuario", p, "modificado recientemente", True)
             elif p.is_dir():
                 for q in p.glob("*.desktop"):
-                    add("autoarranque gráfico", q, next((l for l in q.read_text(errors="replace").splitlines()
-                                                         if l.startswith("Exec=")), ""))
+                    add("autoarranque gráfico", q, next((l for l in _read(q).splitlines()
+                                                         if l.startswith("Exec=")), ""), q.is_symlink())
         ak = h / ".ssh" / "authorized_keys"
-        if ak.exists():
-            n = len([l for l in ak.read_text(errors="replace").splitlines() if l.strip() and not l.startswith("#")])
-            add("clave SSH", ak, f"{n} claves" + (" (enlace simbólico)" if ak.is_symlink() else ""), ak.is_symlink())
+        if ak.is_symlink():
+            add("clave SSH", ak, f"enlace simbólico a {os.readlink(ak)} (no se lee)", True)
+        elif ak.exists():
+            n = len([l for l in _read(ak).splitlines() if l.strip() and not l.startswith("#")])
+            add("clave SSH", ak, f"{n} claves", False)
     # precarga de librerías, sudoers, módulos del kernel
     pre = Path("/etc/ld.so.preload")
     if pre.exists() and pre.read_text().strip():
@@ -218,13 +232,18 @@ def recientes(ctx: Context, v: dict) -> bool:
                  "compáralo con Registros › Buscar 'install'.")
     ctx.out.title("Ficheros SUID que no pertenecen a ningún paquete")
     r = system.run(["find", "/", "-xdev", "-type", "f", "-perm", "-4000"], timeout=300)
-    odd = [p for p in r.out.splitlines() if p.strip() and not _owner_pkg(p)]
+    owners = {p: _owner_pkg(p) for p in r.out.splitlines() if p.strip()}
+    odd = [p for p, pkg in owners.items() if not pkg]
+    unknown = [p for p, pkg in owners.items() if pkg == "?"]
     for p in odd[:30]:
         ctx.out.line(f"  {_when(Path(p))}  {p}")
-    if not odd:
-        ctx.out.ok("Ninguno: todos los SUID son de paquetes del sistema.")
-    else:
+    if unknown:
+        ctx.out.warn(f"No hay dpkg ni rpm: {len(unknown)} SUID sin verificar. Revísalos a mano.")
+    elif not odd:
+        ctx.out.ok("Ninguno: todos los SUID están registrados en paquetes del sistema.")
+    if odd:
         ctx.out.warn("Un SUID fuera de paquetes puede ser una puerta trasera para hacerse root.")
+    ctx.out.info("Que esté registrado no prueba que no se haya cambiado: compruébalo con «dpkg --verify» o «rpm -Va».")
     return True
 
 
@@ -265,10 +284,13 @@ def evidencias(ctx: Context, v: dict) -> bool:
             ctx.out.line(f"  ✓ {name}")
     files_dir = work / "ficheros"
     files_dir.mkdir()
-    for p in COLLECT_PATHS + [str(h / n) for h in homes() for n in (".bash_history", ".zsh_history",
-                                                                     ".ssh/authorized_keys", ".bashrc", ".profile")]:
+    user_files = [str(h / n) for h in homes() for n in (".bash_history", ".zsh_history", ".ssh/authorized_keys",
+                                                         ".bashrc", ".profile")]
+    for p in COLLECT_PATHS + user_files:
         src = Path(p)
         if not src.exists() or src.is_symlink():
+            if src.is_symlink():
+                ctx.out.warn(f"{p} es un enlace simbólico a {os.readlink(src)}: se anota, no se sigue")
             continue
         dest = files_dir / p.lstrip("/")
         try:
@@ -276,14 +298,17 @@ def evidencias(ctx: Context, v: dict) -> bool:
                 shutil.copytree(src, dest, symlinks=True, dirs_exist_ok=True)
             else:
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dest)
+                # sin seguir enlaces y con límite: el usuario podría cambiar el fichero mientras se copia
+                n = safeio.copy(src, dest, MAX_EVIDENCE)
+                if n >= MAX_EVIDENCE:
+                    ctx.out.warn(f"{p}: copiados solo los primeros {MAX_EVIDENCE // (1 << 20)} MB")
         except OSError as e:
             ctx.out.warn(f"No se pudo copiar {p}: {e}")
     ctx.out.line("  ✓ ficheros de configuración, historiales y registros")
     manifest = []
     for p in sorted(work.rglob("*")):
-        if p.is_file():
-            h = hashlib.sha256(p.read_bytes()).hexdigest()
+        if p.is_file() and not p.is_symlink():
+            h, _ = safeio.sha256(p)
             manifest.append(f"{h}  {p.relative_to(work)}")
     (work / "MANIFIESTO.sha256").write_text("\n".join(manifest) + "\n")
     info = (f"Equipo: {system.hostname()}\nSistema: {system.os_pretty()}\nRecogido por: {system.operator()}\n"
@@ -294,7 +319,7 @@ def evidencias(ctx: Context, v: dict) -> bool:
         tar.add(work, arcname=bundle.name.removesuffix(".tar.gz"))
     shutil.rmtree(work)
     os.chmod(bundle, 0o600)
-    digest = hashlib.sha256(bundle.read_bytes()).hexdigest()
+    digest, _ = safeio.sha256(bundle)
     results.write(d / "paquete.sha256", f"{digest}  {bundle.name}\n")
     audit.record("triaje_evidencias", system.hostname(), "OK", f"{bundle} sha256={digest[:16]}... motivo={v.get('motivo') or '-'}")
     ctx.out.ok(f"Evidencias: {bundle} ({bundle.stat().st_size // 1024} KB, {len(manifest)} ficheros)")

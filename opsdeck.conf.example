@@ -48,5 +48,8 @@ edicion = ligera
 # usuario = consulta@empresa.local
 # base = DC=empresa,DC=local
 # cifrado = ldaps
-# Verificar el certificado del controlador (yes) o aceptarlo aunque sea autofirmado (no).
-# verificar_certificado = no
+# Verificar el certificado del controlador (yes, recomendado) o aceptar cualquiera (no, solo
+# laboratorio: alguien en la red podría suplantar al controlador y quedarse con la contraseña).
+# verificar_certificado = yes
+# Certificado (PEM) de la CA interna que firma los certificados de los controladores.
+# ca = /usr/local/share/ca-certificates/empresa-ca.crt

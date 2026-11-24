@@ -79,14 +79,15 @@ def read(limit: int = 50, text: str = "") -> list[dict]:
 
 
 def snapshot_accounts() -> str:
-    """Copia de passwd/shadow/group/gshadow/sudoers antes de un cambio (solo root la lee)."""
+    """Copia de passwd/shadow/group/gshadow/sudoers antes de un cambio (solo root la lee).
+    Devuelve la ruta, '' si las copias están desactivadas o 'ERROR' si no se pudo hacer."""
     cfg = settings()
     if not cfg.getboolean("copias", "cuentas"):
         return ""
     try:
         paths.ensure_private_dir(paths.DATA_DIR, 0o750)
         paths.ensure_private_dir(paths.BACKUP_DIR)
-        dest = paths.BACKUP_DIR / f"cuentas_{time.strftime('%Y%m%d_%H%M%S')}.tar.gz"
+        dest = paths.BACKUP_DIR / f"cuentas_{time.strftime('%Y%m%d_%H%M%S')}_{time.time_ns() % 10**9:09d}.tar.gz"
         with tarfile.open(dest, "w:gz") as tar:
             for p in ("/etc/passwd", "/etc/shadow", "/etc/group", "/etc/gshadow", "/etc/sudoers", "/etc/sudoers.d"):
                 if Path(p).exists():
@@ -98,4 +99,4 @@ def snapshot_accounts() -> str:
             old.unlink(missing_ok=True)
         return str(dest)
     except OSError:
-        return ""
+        return "ERROR"

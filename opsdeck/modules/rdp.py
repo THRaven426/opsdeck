@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from ..core import accounts as acc
-from ..core import system
+from ..core import safeio, system
 from ..core.catalog import Action, Context, Module, Param, cmd, file
 from ..core.ops import apply
 
@@ -154,7 +154,11 @@ def diagnosticar(ctx: Context, v: dict) -> bool:
     if xs.is_symlink():
         o.check(False, f"~/.xsession es un enlace simbólico a {xs.resolve()}: revísalo a mano")
     elif xs.exists():
-        o.check(True, f"~/.xsession: {xs.read_text(errors='replace').strip().splitlines()[0] if xs.read_text(errors='replace').strip() else '(vacío)'}")
+        try:
+            first = (safeio.read_text(xs, 4096, owners=(0, u.pw_uid)).strip().splitlines() or ["(vacío)"])[0]
+            o.check(True, f"~/.xsession: {first[:120]}")
+        except OSError as e:
+            o.check(False, f"~/.xsession no se puede leer de forma segura ({e}): revísalo a mano")
     else:
         d = default_session()
         o.check(bool(d), f"Sin ~/.xsession: usará el escritorio por defecto ({d})" if d
