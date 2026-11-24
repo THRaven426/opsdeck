@@ -137,7 +137,8 @@ def _ip_bounds(spec: str):
 
 def _resolve(host: str) -> list:
     try:
-        return sorted({ipaddress.ip_address(i[4][0]) for i in socket.getaddrinfo(host, None)})
+        return sorted({ipaddress.ip_address(i[4][0]) for i in socket.getaddrinfo(host, None)},
+                      key=lambda a: (a.version, a))
     except (socket.gaierror, ValueError, OSError):
         return []
 
@@ -159,10 +160,10 @@ def _range_inside(lo, hi, nets) -> bool:
 
 
 def _merge(nets) -> list:
-    nets = sorted(nets, key=lambda n: n.network_address)
+    nets = sorted(nets, key=lambda n: (n.version, n.network_address))
     merged: list = []
     for n in nets:
-        if merged and int(n.network_address) <= int(merged[-1][1]) + 1:
+        if merged and merged[-1][0].version == n.version and int(n.network_address) <= int(merged[-1][1]) + 1:
             merged[-1][1] = max(merged[-1][1], n.broadcast_address)
         else:
             merged.append([n.network_address, n.broadcast_address])

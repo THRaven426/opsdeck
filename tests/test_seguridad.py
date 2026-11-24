@@ -165,3 +165,12 @@ def test_opciones_extra_no_permiten_ficheros_ni_objetivos(monkeypatch):
     for bad in ("-srd /root/x", "-me d", "-t /tmp/x", "-config c", "-elog x", "-ev"):
         assert tooling.extra_args(bad, nuclei.FORBIDDEN)[1], bad
     assert not tooling.extra_args("-rl 50", nuclei.FORBIDDEN)[1]
+
+
+def test_resolucion_doble_pila(monkeypatch):
+    import socket
+    infos = [(socket.AF_INET6, 1, 6, "", ("2600:3c01::1", 0, 0, 0)), (socket.AF_INET, 1, 6, "", ("45.33.32.156", 0))]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: infos)
+    assert [str(a) for a in scope._resolve("dual.ejemplo")] == ["45.33.32.156", "2600:3c01::1"]
+    spans = scope._merge([ipaddress.ip_network("::/120"), ipaddress.ip_network("10.0.0.0/24")])
+    assert len(spans) == 2
