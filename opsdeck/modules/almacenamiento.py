@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ..core import system
+from ..core import system, tooling
 from ..core.catalog import Action, Context, Module, Param
 from ..core.ops import apply
 
@@ -141,7 +141,7 @@ def limpiar(ctx: Context, v: dict) -> bool:
             ctx.out.ok(f"Caché de paquetes: liberados {_human(before - _du('/var/cache/apt/archives'))}")
             done = True
     if v.get("journal") and system.has_cmd("journalctl"):
-        days = str(v.get("dias") or 30)
+        days = str(tooling.int_in(v.get("dias"), 30, 1, 3650))
         before = _journal_size()
         if apply(ctx, "limpiar_journal", f"{days}d", ["journalctl", f"--vacuum-time={days}d"], quiet=True):
             ctx.out.ok(f"Registros de más de {days} días eliminados: liberados {_human(max(0, before - _journal_size()))}")

@@ -53,6 +53,10 @@ def _targets(ctx, text: str) -> list[str]:
         ctx.out.error("Indica al menos un objetivo")
         return []
     if len(items) == 1 and Path(items[0]).is_file():
+        problem = scope.target_file_problem(Path(items[0]))
+        if problem:
+            ctx.out.error(f"No se usa la lista de objetivos: {problem}")
+            return []
         return ["-iL", items[0]]
     for t in items:
         if not TARGET_RE.match(t):
@@ -79,7 +83,7 @@ def _run(ctx, label: str, args: list[str], targets: list[str], exclude: str, d: 
 def _set_flag(args: list[str], prefix: str, new: list[str]) -> list[str]:
     """Sustituye una opción del perfil (p. ej. -T4 por -T2) o la añade."""
     out, skip = [], False
-    for i, a in enumerate(args):
+    for a in args:
         if skip:
             skip = False
             continue
@@ -97,11 +101,11 @@ def advanced(ctx: Context, v: dict, base: list[str]) -> Optional[list[str]]:
     args = list(base)
     ports = (v.get("puertos") or "").replace(" ", "")
     if ports:
-        if not PORTS_RE.match(ports):
+        if ports.lower() not in ("-", "todos", "all") and not PORTS_RE.match(ports):
             ctx.out.error("Puertos no válidos. Ej.: 22,80,443  1-1024  T:80,U:161  o «-» para todos")
             return None
         args = _set_flag(_set_flag(args, "--top-ports", []), "-F", [])
-        args = _set_flag(args, "-p", ["-p-"] if ports in ("-", "todos", "all") else ["-p", ports])
+        args = _set_flag(args, "-p", ["-p-"] if ports.lower() in ("-", "todos", "all") else ["-p", ports])
     if v.get("tiempo"):
         args = [a for a in args if not re.match(r"^-T[0-5]$", a)] + [f"-{v['tiempo']}"]
     if v.get("sin_ping") and "-Pn" not in args:
@@ -128,7 +132,11 @@ def advanced(ctx: Context, v: dict, base: list[str]) -> Optional[list[str]]:
             args += ["--script", scripts]
     sargs = (v.get("script_args") or "").strip()
     if sargs:
-        args += ["--script-args", sargs]
+        if "--script-args" in args:            # nmap solo usa el último --script-args: se combinan
+            i = args.index("--script-args")
+            args[i + 1] = f"{args[i + 1]},{sargs}"
+        else:
+            args += ["--script-args", sargs]
     for key, flag, lo, hi in (("min_rate", "--min-rate", 1, 100000), ("reintentos", "--max-retries", 0, 10)):
         if str(v.get(key) or "").strip():
             args = _set_flag(args, flag, [flag, str(tooling.int_in(v[key], 0, lo, hi))])
@@ -251,9 +259,10 @@ def escanear(ctx: Context, v: dict) -> bool:
         return False
     if prof == "vulnerabilidades":
         feeds.warn_if_stale(ctx)
-    d = results.new_dir("escaneo", f"{prof}_{v['objetivo'].replace('/', '_')}")
-    if prof != "completo" and advanced(ctx, v, PROFILES[prof][1]) is None:
+    args = advanced(ctx, v, PROFILES[prof][1]) if prof != "completo" else []
+    if args is None:
         return False
+    d = results.new_dir("escaneo", f"{prof}_{v['objetivo'].replace('/', '_')}")
     if prof == "completo":
         phase1 = advanced(ctx, {k: v.get(k) for k in ("tiempo", "sin_ping", "min_rate", "reintentos", "tiempo_equipo",
                                                       "interfaz", "ipv6", "puertos")},
@@ -271,9 +280,11 @@ def escanear(ctx: Context, v: dict) -> bool:
             return rc == 0
         ctx.out.info(f"Puertos abiertos: {','.join(map(str, ports))}. Analizando servicios en {len(hosts)} equipos...")
         phase2 = advanced(ctx, {**v, "puertos": ""}, ["-sS", "-sV", "-sC", "-O", "-T4", "-p", ",".join(map(str, ports))])
-        rc, xml = _run(ctx, "completo_servicios", phase2 or [], hosts, "", d, "2_servicios")
+        if phase2 is None:
+            return False
+        rc, xml = _run(ctx, "completo_servicios", phase2, hosts, "", d, "2_servicios")
     else:
-        rc, xml = _run(ctx, prof, advanced(ctx, v, PROFILES[prof][1]) or [], t, v.get("excluir", ""), d, prof)
+        rc, xml = _run(ctx, prof, args, t, v.get("excluir", ""), d, prof)
     summary(ctx, nmapxml.parse(xml))
     ctx.out.info(f"Resultados completos en {d}")
     return rc == 0

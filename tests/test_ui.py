@@ -1,5 +1,4 @@
 """Pruebas de la interfaz con el simulador de Textual (sin terminal real)."""
-import asyncio
 import os
 
 import pytest
@@ -152,6 +151,8 @@ async def test_todos_los_formularios_se_abren_y_cierran():
     from opsdeck.core.catalog import AVAILABLE, all_modules
     app = OpsdeckApp()
     opened = 0
+    expected = sum(1 for m in all_modules() if m.status().state == AVAILABLE
+                   for a in m.actions() if a.available() and a.visible_params())
     async with app.run_test(size=(140, 45)) as pilot:
         await pilot.pause()
         for m in all_modules():
@@ -167,7 +168,7 @@ async def test_todos_los_formularios_se_abren_y_cierran():
                 await pilot.pause()
                 assert app.screen is app.main, f"{m.id}.{a.id} no se cerró"
                 opened += 1
-    assert opened > 40
+    assert expected > 0 and opened == expected
 
 
 async def test_resultados_y_grupos():

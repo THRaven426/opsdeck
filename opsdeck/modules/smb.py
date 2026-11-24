@@ -178,24 +178,19 @@ def netexec(ctx: Context, v: dict) -> bool:
     args = [tool, proto, *t, "--threads", str(tooling.int_in(v.get("hilos"), 32, 1, 256)),
             "--timeout", str(tooling.int_in(v.get("espera"), 5, 1, 120))]
     user = (v.get("usuario") or "").strip()
-    pwfile = None
+    secret = None                        # (opción, valor) que se pasa en un fichero 0600, nunca en argv
     if user:
         dom, _, u = user.rpartition("\\")
         args += ["-u", u]
         if dom:
             args += ["-d", dom]
         if v.get("password"):
-            import tempfile
-            fd, pwfile = tempfile.mkstemp(prefix="opsdeck-nxc-")
-            os.write(fd, (v["password"] + "\n").encode())
-            os.close(fd)
-            os.chmod(pwfile, 0o600)
-            args += ["-p", pwfile]       # un fichero: la contraseña no aparece en la lista de procesos
+            secret = ("-p", v["password"])
         elif v.get("hash"):
             if not re.match(r"^([0-9a-fA-F]{32}:)?[0-9a-fA-F]{32}$", v["hash"]):
                 ctx.out.error("Hash NT no válido (32 hex, o LM:NT)")
                 return False
-            args += ["-H", v["hash"]]
+            secret = ("-H", v["hash"])   # el hash vale tanto como la contraseña (pass-the-hash)
         if v.get("local"):
             args.append("--local-auth")
         if v.get("kerberos"):
@@ -216,6 +211,13 @@ def netexec(ctx: Context, v: dict) -> bool:
         ctx.out.error(err)
         return False
     d = results.new_dir("smb", f"netexec_{proto}_{v['objetivo'].replace('/', '_')}")
+    pwfile = None
+    if secret:
+        import tempfile
+        fd, pwfile = tempfile.mkstemp(prefix="opsdeck-nxc-")
+        with os.fdopen(fd, "w") as fh:
+            fh.write(secret[1] + "\n")
+        args += [secret[0], pwfile]
     tooling.show_cmd(ctx, args + extra)
     try:
         rc, _ = stream(ctx, args + extra, accion=f"netexec_{proto}", objetivo=" ".join(t),
