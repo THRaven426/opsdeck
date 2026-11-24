@@ -137,7 +137,7 @@ Para equipos sin git o si prefieres una versión cerrada. Mira el número de la 
 [Releases](https://github.com/THRaven426/opsdeck/releases/latest) y sustitúyelo en `VERSION`:
 
 ```bash
-VERSION=2.4.0
+VERSION=2.4.2
 curl -LO https://github.com/THRaven426/opsdeck/archive/refs/tags/v$VERSION.tar.gz
 tar -xzf v$VERSION.tar.gz
 cd opsdeck-$VERSION
