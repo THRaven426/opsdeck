@@ -505,14 +505,14 @@ def sudo_quitar(ctx: Context, v: dict) -> bool:
 
 def probar(ctx: Context, v: dict) -> bool:
     name = v["usuario"].strip()
-    r = system.run(["id", name], c_locale=True, timeout=30)
+    r = system.run(["id", "--", name], c_locale=True, timeout=30)
     ctx.out.check(r.ok, f"id {name}: {r.text}")
     if not r.ok:
         d = joined()
         ctx.out.info("Si es un usuario del dominio, prueba con nombre@" + (d.get("nombre", "dominio")) +
                      " o revisa el estado de sssd en Servicios.")
         return False
-    g = system.run(["getent", "passwd", name], c_locale=True)
+    g = system.run(["getent", "passwd", "--", name], c_locale=True)
     if g.out.strip():
         f = g.out.strip().split(":")
         ctx.out.line(f"    home: {f[5]}  ·  shell: {f[6]}")

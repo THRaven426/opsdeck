@@ -150,8 +150,8 @@ def _set_password(ctx, name, mode, manual, force) -> bool:
 
 def restablecer(ctx: Context, v: dict) -> bool:
     name = v["usuario"]
-    if not acc.is_local(name):
-        return _err(ctx, f"'{name}' no es un usuario local")
+    if not _guard(ctx, name):
+        return False
     return _set_password(ctx, name, v["modo"], v.get("password", ""), v["forzar"])
 
 
@@ -303,8 +303,8 @@ def eliminar(ctx: Context, v: dict) -> bool:
         _kill(ctx, name)
     if system.has_cmd("crontab"):
         system.run(["crontab", "-r", "-u", name])
-    if _sudo_file(name).exists():
-        _sudo_file(name).unlink()
+    for f in {_sudo_file(name), _legacy_sudo_file(name)}:
+        f.unlink(missing_ok=True)
     if not apply(ctx, "eliminar_usuario", name, ["userdel", "-r", name], f"copia_home={copy or 'ninguna'}"):
         return False
     ctx.out.ok(f"Usuario {name} eliminado.")
@@ -368,6 +368,14 @@ def grupo_eliminar(ctx: Context, v: dict) -> bool:
 
 
 def _sudo_file(name: str) -> Path:
+    """Fichero de la regla en sudoers.d. sudo ignora los ficheros cuyo nombre contiene un punto
+    (o acaba en ~), así que los caracteres fuera de [A-Za-z0-9_-] se codifican (juan.perez -> juan_2eperez)."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", lambda m: f"_{ord(m.group()):02x}", name)
+    return Path(f"/etc/sudoers.d/90-opsdeck-{safe}")
+
+
+def _legacy_sudo_file(name: str) -> Path:
+    """Nombre usado hasta 2.4.1 (sin codificar). Con un punto, sudo nunca lo leyó; se limpia al retirar."""
     return Path(f"/etc/sudoers.d/90-opsdeck-{name}")
 
 
@@ -412,8 +420,9 @@ def sudo_quitar(ctx: Context, v: dict) -> bool:
     g = acc.admin_group()
     if g and acc.is_member(name, g):
         apply(ctx, "revocar_sudo", name, ["gpasswd", "-d", name, g], f"via=grupo:{g}", quiet=True)
-    if _sudo_file(name).exists():
-        apply(ctx, "revocar_sudo", name, ["rm", "-f", str(_sudo_file(name))], f"via={_sudo_file(name)}")
+    for f in sorted({_sudo_file(name), _legacy_sudo_file(name)}):
+        if f.exists():
+            apply(ctx, "revocar_sudo", name, ["rm", "-f", str(f)], f"via={f}")
     if acc.sudo_summary(name) == "no":
         ctx.out.ok(f"{name} ya no tiene sudo.")
     else:
