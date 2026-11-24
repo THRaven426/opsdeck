@@ -218,7 +218,11 @@ def _split_targets(text: str) -> tuple[dict, list[str]]:
         if "://" in it:
             from urllib.parse import urlparse
             u = urlparse(it)
-            host, port = u.hostname or "", u.port or (443 if u.scheme == "https" else 80)
+            try:
+                host, port = u.hostname or "", u.port or (443 if u.scheme == "https" else 80)
+            except ValueError:
+                bad.append(it)
+                continue
         elif it.startswith("["):
             host, _, rest = it[1:].partition("]")
             port = int(rest[1:]) if rest.startswith(":") and rest[1:].isdigit() else None
@@ -385,10 +389,6 @@ def caducidad(ctx: Context, v: dict) -> bool:
     results.write(d / "certificados.csv", "servicio;cn;emisor;caduca;dias\n" + "\n".join(";".join(map(str, r)) for r in rows) + "\n")
     ctx.out.info(f"Inventario en {d / 'certificados.csv'}")
     return True
-
-
-def testssl_param_help() -> str:
-    return "Para el detalle completo de un servicio concreto usa «Web y TLS › TLS en profundidad (testssl)»."
 
 
 class Tls(Module):

@@ -100,7 +100,10 @@ def parse(path: Path) -> Scan:
         for p in h.findall("ports/port"):
             state = p.find("state")
             svc = p.find("service")
-            port = Port(int(p.get("portid", 0)), p.get("protocol", "tcp"), state.get("state", "") if state is not None else "",
+            portid = p.get("portid", "")
+            if not portid.isdigit():
+                continue
+            port = Port(int(portid), p.get("protocol", "tcp"), state.get("state", "") if state is not None else "",
                         svc.get("name", "") if svc is not None else "", svc.get("product", "") if svc is not None else "",
                         svc.get("version", "") if svc is not None else "", svc.get("tunnel", "") if svc is not None else "")
             for s in p.findall("script"):

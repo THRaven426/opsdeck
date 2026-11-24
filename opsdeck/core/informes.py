@@ -13,6 +13,7 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Optional
 
@@ -60,7 +61,8 @@ def parse_nessus_xml(root: ET.Element) -> list[Item]:
             if tag.get("name") == "host-ip" and tag.text:
                 host = tag.text.strip()
         for ri in rh.findall("ReportItem"):
-            port = int(ri.get("port", "0") or 0) or None
+            port_txt = ri.get("port", "") or ""
+            port = int(port_txt) if port_txt.isdigit() and int(port_txt) else None
             out.append(Item(host, port, ri.get("protocol", "tcp"), SEV_NESSUS.get(ri.get("severity", "0"), "INFO"),
                             ri.get("pluginID", ""), ri.get("pluginName", ""),
                             (ri.findtext("cvss3_base_score") or ri.findtext("cvss_base_score") or ""), "nessus",
@@ -87,6 +89,10 @@ def parse_openvas_xml(root: ET.Element) -> list[Item]:
     return out
 
 
+def _cell(row: dict, keys: dict, k: str) -> str:
+    return (row.get(keys.get(k, ""), "") or "").strip()
+
+
 def parse_csv(text: str) -> list[Item]:
     rows = list(csv.DictReader(io.StringIO(text)))
     if not rows:
@@ -95,7 +101,7 @@ def parse_csv(text: str) -> list[Item]:
     out = []
     if "plugin id" in keys:                         # Nessus
         for r in rows:
-            g = lambda k: (r.get(keys.get(k, ""), "") or "").strip()
+            g = partial(_cell, r, keys)
             port = g("port")
             risk = g("risk") or g("severity")
             out.append(Item(g("host") or g("ip address"), int(port) if port.isdigit() and port != "0" else None,
@@ -105,7 +111,7 @@ def parse_csv(text: str) -> list[Item]:
                             "nessus", g("plugin output")[:600], [c for c in re.split(r"[,\s]+", g("cve")) if c]))
     elif "nvt name" in keys or "nvt oid" in keys:   # OpenVAS
         for r in rows:
-            g = lambda k: (r.get(keys.get(k, ""), "") or "").strip()
+            g = partial(_cell, r, keys)
             port = g("port")
             out.append(Item(g("ip"), int(port) if port.isdigit() else None, g("port protocol") or "tcp",
                             SEV_WORD.get(g("severity").lower(), _sev_cvss(g("cvss"))), g("nvt oid"), g("nvt name"),
@@ -213,7 +219,7 @@ def load(path: Path) -> tuple[list[Item], str]:
     if head.startswith(b"%PDF"):
         if not system.has_cmd("pdftotext"):
             return [], "Para leer PDF hace falta pdftotext (paquete poppler-utils). Mejor: exporta el informe en .nessus o XML."
-        r = system.run(["pdftotext", "-layout", str(path), "-"], timeout=300)
+        r = system.run(["pdftotext", "-layout", str(path.resolve()), "-"], timeout=300)
         items = parse_pdf_text(r.out)
         return items, "pdf" if items else "PDF sin resultados reconocibles (exporta en .nessus/XML/CSV)"
     text = path.read_text(errors="replace")
@@ -231,13 +237,23 @@ def load(path: Path) -> tuple[list[Item], str]:
     return (items, "csv") if items else ([], "Formato no reconocido (usa .nessus, XML de OpenVAS, CSV o PDF)")
 
 
+HOST_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._:-]*[A-Za-z0-9])?$")
+
+
+def split_valid(items: list[Item]) -> tuple[list[Item], int]:
+    """(válidos, descartados). El equipo de un informe acaba en la línea de comandos de nmap y otras
+    herramientas que se ejecutan como root: un nombre que empiece por «-» sería una opción."""
+    ok = [i for i in items if HOST_RE.match(i.host or "")]
+    return ok, len(items) - len(ok)
+
+
 def save(items: list[Item], path: Path) -> None:
     path.write_text(json.dumps([asdict(i) for i in items], ensure_ascii=False, indent=0) + "\n", encoding="utf-8")
 
 
 def read(path: Path) -> list[Item]:
     try:
-        return [Item(**d) for d in json.loads(path.read_text(encoding="utf-8"))]
+        return split_valid([Item(**d) for d in json.loads(path.read_text(encoding="utf-8"))])[0]
     except (OSError, json.JSONDecodeError, TypeError):
         return []
 

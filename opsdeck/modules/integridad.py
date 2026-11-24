@@ -36,8 +36,8 @@ def _promote(ctx, new: Path, cur: Path) -> bool:
         ctx.out.error(f"AIDE no generó {new}")
         return False
     cur.parent.mkdir(parents=True, exist_ok=True)
+    new.chmod(0o600)
     shutil.move(str(new), str(cur))
-    cur.chmod(0o600)
     return True
 
 
