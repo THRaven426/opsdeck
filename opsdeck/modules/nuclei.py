@@ -24,7 +24,8 @@ PROTOCOLS = [("", "Todos"), ("http", "Solo HTTP"), ("network", "Red (TCP: servic
 TAG_RE = re.compile(r"^[A-Za-z0-9_.,:-]*$")
 PATH_RE = re.compile(r"^[A-Za-z0-9_./,~-]*$")
 FORBIDDEN = tooling.COMMON_FORBIDDEN + ("-u", "-target", "-update", "-up", "-ut", "-update-templates",
-                                        "-lfa", "-allow-local-file-access", "-code")
+                                        "-lfa", "-allow-local-file-access", "-code",
+                                        "-config", "-uc", "-uncover", "-uq", "-uncover-query", "-ue", "-uncover-engine")
 
 # Producto detectado por nmap (en minúsculas) -> etiquetas de nuclei. Solo afina qué plantillas se usan;
 # la detección la hacen las plantillas (que se actualizan a diario), no esta tabla.

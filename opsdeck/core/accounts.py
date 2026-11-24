@@ -67,7 +67,7 @@ def local_users(include_system: bool = False) -> list[pwd.struct_passwd]:
     out = []
     for line in Path("/etc/passwd").read_text().splitlines():
         f = line.split(":")
-        if len(f) < 7:
+        if len(f) < 7 or not f[2].isdigit():      # líneas NIS «+::::::» o mal formadas
             continue
         uid = int(f[2])
         if include_system or is_human(uid) or uid == 0:
@@ -149,6 +149,7 @@ def state(name: str) -> str:
         return "?"
     _, h, last, _, mx, _, _, exp, _ = s
     today = today_days()
+    last, mx, exp = (x if x.isdigit() else "" for x in (last, mx, exp))
     if exp and int(exp) <= today:
         return "caducada"
     if h == "":

@@ -1,5 +1,4 @@
 """Pruebas del núcleo."""
-import os
 import subprocess
 
 import pytest
@@ -252,6 +251,7 @@ def test_web_detecta_problemas(monkeypatch):
                                                      "cabeceras": {"server": "Apache/2.4.41", "x-frame-options": "DENY"}})
     monkeypatch.setattr(web, "tls_info", lambda h, p: {"versiones": ["TLS 1.0", "TLS 1.2"], "dias": -3,
                                                        "caduca": "2026-11-13", "confianza": "válido y de confianza"})
+    monkeypatch.setattr(web, "request", lambda *a, **k: {"estado": 405, "cabeceras": {}, "cuerpo": b""})
     r = web.check_url("https://intranet.local")
     levels = {lvl for lvl, _ in r["hallazgos"]}
     texts = " ".join(t for _, t in r["hallazgos"])

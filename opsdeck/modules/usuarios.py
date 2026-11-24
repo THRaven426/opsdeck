@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import tarfile
 import tempfile
 import time
@@ -440,11 +441,107 @@ def _unsafe_ssh(name: str) -> str:
     return ""
 
 
+class _UnsafeSSH(Exception):
+    pass
+
+
+def _ssh_dir_fd(u, create: bool = False) -> int:
+    """Abre ~/.ssh sin seguir enlaces. El usuario es dueño de la carpeta y podría cambiarla por un
+    enlace entre la comprobación y la escritura; trabajar sobre el descriptor evita esa carrera."""
+    home = os.open(u.pw_dir, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        if create:
+            try:
+                os.mkdir(".ssh", 0o700, dir_fd=home)
+            except FileExistsError:
+                pass
+        try:
+            d = os.open(".ssh", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=home)
+        except FileNotFoundError:
+            raise
+        except OSError as e:
+            raise _UnsafeSSH(f"{u.pw_dir}/.ssh no es una carpeta normal: no se toca (revísalo a mano)") from e
+    finally:
+        os.close(home)
+    st = os.fstat(d)
+    if st.st_uid not in (0, u.pw_uid):
+        os.close(d)
+        raise _UnsafeSSH(f"{u.pw_dir}/.ssh pertenece a otro usuario: no se toca (revísalo a mano)")
+    return d
+
+
+def _check_keys_fd(fd: int, u) -> None:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_uid not in (0, u.pw_uid):
+        raise _UnsafeSSH(f"{u.pw_dir}/.ssh/authorized_keys no es un fichero normal del usuario: "
+                         "no se toca (revísalo a mano)")
+
+
+def _read_keys(u) -> str:
+    try:
+        d = _ssh_dir_fd(u)
+    except FileNotFoundError:
+        return ""
+    try:
+        try:
+            fd = os.open("authorized_keys", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=d)
+        except FileNotFoundError:
+            return ""
+        except OSError as e:
+            raise _UnsafeSSH(f"{u.pw_dir}/.ssh/authorized_keys es un enlace o no se puede abrir") from e
+        with open(fd, encoding="utf-8", errors="replace") as fh:
+            _check_keys_fd(fh.fileno(), u)
+            return fh.read()
+    finally:
+        os.close(d)
+
+
 def _key_lines(name: str) -> list[str]:
-    f = _keys_file(name)
-    if not f.exists() or f.is_symlink():
+    try:
+        text = _read_keys(acc.user(name))
+    except (_UnsafeSSH, OSError):
         return []
-    return [l for l in f.read_text(errors="replace").splitlines() if l.strip() and not l.lstrip().startswith("#")]
+    return [l for l in text.splitlines() if l.strip() and not l.lstrip().startswith("#")]
+
+
+def _append_key(u, key: str) -> None:
+    d = _ssh_dir_fd(u, create=True)
+    try:
+        os.fchown(d, u.pw_uid, u.pw_gid)
+        os.fchmod(d, 0o700)
+        try:
+            fd = os.open("authorized_keys", os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                         0o600, dir_fd=d)
+        except OSError as e:
+            raise _UnsafeSSH(f"{u.pw_dir}/.ssh/authorized_keys es un enlace o no se puede abrir") from e
+        with open(fd, "a", encoding="utf-8") as fh:
+            _check_keys_fd(fh.fileno(), u)
+            os.fchown(fh.fileno(), u.pw_uid, u.pw_gid)
+            os.fchmod(fh.fileno(), 0o600)
+            fh.write(key + "\n")
+    finally:
+        os.close(d)
+
+
+def _rewrite_keys(u, text: str) -> None:
+    """Escribe un fichero nuevo y lo cambia por el antiguo dentro de la misma carpeta abierta."""
+    d = _ssh_dir_fd(u)
+    tmp = f".authorized_keys.{os.getpid()}"
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=d)
+        try:
+            with open(fd, "w", encoding="utf-8") as fh:
+                os.fchown(fh.fileno(), u.pw_uid, u.pw_gid)
+                fh.write(text)
+            os.replace(tmp, "authorized_keys", src_dir_fd=d, dst_dir_fd=d)
+        except BaseException:
+            try:
+                os.unlink(tmp, dir_fd=d)
+            except OSError:
+                pass
+            raise
+    finally:
+        os.close(d)
 
 
 def _fingerprint(line: str) -> str:
@@ -493,16 +590,10 @@ def ssh_anadir(ctx: Context, v: dict) -> bool:
     problem = _unsafe_ssh(name)
     if problem:
         return _err(ctx, problem)
-    u = acc.user(name)
-    sshdir = Path(u.pw_dir) / ".ssh"
-    sshdir.mkdir(mode=0o700, exist_ok=True)
-    os.chown(sshdir, u.pw_uid, u.pw_gid)
-    os.chmod(sshdir, 0o700)
-    f = sshdir / "authorized_keys"
-    with open(f, "a", encoding="utf-8") as fh:
-        fh.write(key + "\n")
-    os.chown(f, u.pw_uid, u.pw_gid)
-    os.chmod(f, 0o600)
+    try:
+        _append_key(acc.user(name), key)
+    except (_UnsafeSSH, OSError) as e:
+        return _err(ctx, str(e))
     audit.record("anadir_clave_ssh", name, "OK", fp)
     ctx.out.ok(f"Clave añadida a {name}: {fp}")
     return True
@@ -523,9 +614,12 @@ def ssh_quitar(ctx: Context, v: dict) -> bool:
     if problem:
         return _err(ctx, problem)
     target = lines[n - 1]
-    f = _keys_file(name)
-    kept = [l for l in f.read_text(errors="replace").splitlines() if l != target]
-    f.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+    u = acc.user(name)
+    try:
+        kept = [l for l in _read_keys(u).splitlines() if l != target]
+        _rewrite_keys(u, "\n".join(kept) + ("\n" if kept else ""))
+    except (_UnsafeSSH, OSError) as e:
+        return _err(ctx, str(e))
     audit.record("quitar_clave_ssh", name, "OK", _fingerprint(target))
     ctx.out.ok(f"Clave {n} eliminada de {name}.")
     return True
