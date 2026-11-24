@@ -52,5 +52,6 @@ jobs:
       - name: Instalar dependencias
         run: pip install --require-hashes --no-deps -r requirements-dev.txt
 
+      # Las pruebas de cuentas y ficheros del sistema necesitan root (README, Desarrollo)
       - name: pytest
-        run: python -m pytest -q
+        run: sudo -E env "PATH=$PATH" python -m pytest -q
