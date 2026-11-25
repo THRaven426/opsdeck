@@ -265,8 +265,8 @@ preguntar. La guía completa está en [HELP.md](HELP.md) y dentro de la herramie
 opsdeck autoactualizar
 ```
 
-Enseña los cambios, pide confirmación, descarga la versión nueva (solo desde un origen https, sin
-ejecutar hooks de git) y actualiza su entorno Python con las versiones y hashes fijados; si eso
+Indica la versión instalada y la nueva, pide confirmación, descarga la versión nueva (solo desde un
+origen https, sin ejecutar hooks de git) y actualiza su entorno Python con las versiones y hashes fijados; si eso
 falla, vuelve a la versión anterior. Conserva la configuración, los datos y los registros. Si avisa
 de que el instalador ha cambiado, ejecuta `sudo /opt/opsdeck/install.sh` para aplicar el lanzador
 nuevo. Después conviene:
