@@ -36,6 +36,25 @@ edicion = ligera
 # true = ignorar las subredes locales y permitir SOLO las de redes_autorizadas (más estricto).
 # solo_configuradas = false
 
+[verificacion]
+# Verificación de vulnerabilidades. Para saber si un CVE ya está corregido en un paquete de Ubuntu o
+# Debian se descarga el aviso de ese CVE desde OSV (solo sale el identificador del CVE, nunca equipos).
+# false = no consultar y usar solo los avisos que ya estén en caché.
+# consultar_osv = true
+# Servidor interactsh PROPIO dentro de la red interna, para las pruebas fuera de banda (Log4Shell,
+# SSRF, ejecución ciega). Vacío = esas pruebas no se lanzan. Se rechazan los servidores públicos y
+# los que no resuelvan a una dirección interna o autorizada.
+# interactsh_servidor = https://oast.interno.empresa.local
+
+[actualizacion]
+# Al abrir la interfaz se comprueba si hay una versión nueva (solo consulta el repositorio; no instala
+# nada: la actualización se elige en la propia interfaz con la tecla u).
+# comprobar_al_abrir = true
+
+[interfaz]
+# Tema de colores: opsdeck (oscuro), claro o contraste (alto contraste). También con la tecla t.
+# tema = opsdeck
+
 [usuarios]
 # shell = /bin/bash
 # longitud_password = 16

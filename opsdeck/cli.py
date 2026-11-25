@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import getpass
-import re
 import sys
 
 from rich.console import Console
@@ -254,79 +253,28 @@ def cmd_resultados(args: list[str]) -> int:
     return 0
 
 
-_VERSION_RE = re.compile(r'^VERSION\s*=\s*"(\d{1,4}(?:\.\d{1,4}){1,3})"\s*$', re.M)
-
-
-def _remote_version(git: list[str], rev: str) -> str:
-    """Número de versión de la rama remota, leído como texto (sin importar ni ejecutar nada). Solo se
-    acepta un número con forma de versión: lo que venga del remoto no llega tal cual a la terminal."""
-    r = system.run(git + ["show", f"{rev}:opsdeck/__init__.py"])
-    m = _VERSION_RE.search(r.out) if r.ok else None
-    return m.group(1) if m else ""
-
-
 def cmd_autoactualizar(yes: bool) -> int:
-    repo = paths.APP_DIR
-    if not (repo / ".git").exists():
-        console.print("Esta instalación no viene de un repositorio git. Para actualizar: descarga la versión "
-                      "nueva y ejecuta de nuevo install.sh (conserva configuración y datos).")
-        return 1
-    if not system.has_cmd("git"):
-        console.print("Falta git: instálalo (apt install git) o actualiza con install.sh.")
-        return 1
-    # Como root, git no debe ejecutar nada del repositorio: ni hooks, ni fsmonitor, ni otro ssh.
-    git = ["git", "-C", str(repo), "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-           "-c", "core.sshCommand=ssh", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always"]
-    url = system.run(git + ["remote", "get-url", "origin"]).out.strip()
-    if not url.startswith("https://"):
-        console.print(f"El repositorio de origen no es https ({escape(url) or 'sin origen'}): se actualiza solo "
-                      "desde https. Descarga la versión nueva y ejecuta install.sh.")
-        return 1
-    fetch = system.run(git + ["fetch", "--quiet", "origin"])
-    if not fetch.ok:
-        console.print("No se pudo consultar el repositorio remoto:\n" + escape(fetch.text))
-        return 1
-    # Se fija el commit remoto una vez: lo que se anuncia es exactamente lo que se instala.
-    up = system.run(git + ["rev-parse", "--verify", "--quiet", "@{u}^{commit}"])
-    target = up.out.strip()
-    if not up.ok or not re.fullmatch(r"[0-9a-f]{40,64}", target):
-        console.print("La instalación no sigue ninguna rama remota:\n" + escape(up.text))
-        return 1
-    count = system.run(git + ["rev-list", "--count", f"HEAD..{target}"])
-    if not count.ok:
-        console.print("No se pudo comparar con la versión remota:\n" + escape(count.text))
-        return 1
-    if count.out.strip() == "0":
+    from .core import actualizar
+    est = actualizar.comprobar(VERSION)
+    if est.estado == actualizar.AL_DIA:
         console.print(f"[green]{NAME} {VERSION} ya es la última versión.[/]")
         return 0
-    nueva = _remote_version(git, target)
+    if not est.hay_nueva:
+        console.print(escape(est.mensaje))
+        return 1
     console.print(f"Hay una versión nueva de {NAME}.\n  Versión actual: {VERSION}\n  Versión nueva:  "
-                  + (nueva if nueva and nueva != VERSION
-                     else f"{nueva} (revisión {target[:7]})" if nueva else f"revisión {target[:7]}"))
+                  + escape(est.nueva_texto))
     if not yes and not _ask_yes("¿Actualizar ahora?"):
         console.print("Cancelado.")
         return 1
-    before = system.run(git + ["rev-parse", "HEAD"]).out.strip()
-    r = system.run(git + ["merge", "--ff-only", "--quiet", target])
-    if not r.ok:
-        console.print("No se pudo actualizar (¿hay cambios locales en la instalación?):\n" + escape(r.text))
+    res = actualizar.instalar(est)
+    if not res.ok:
+        console.print(escape(res.mensaje))
         return 1
-    changed = system.run(git + ["diff", "--name-only", before, "HEAD"]).out.split()
-    pip = repo / ".venv" / "bin" / "pip"
-    if pip.exists():
-        r = system.run([str(pip), "install", "-q", "--require-hashes", "--no-deps", "-r", str(repo / "requirements.txt")],
-                       timeout=600)
-        if not r.ok:
-            system.run(git + ["reset", "--hard", "--quiet", before])
-            console.print("No se pudieron instalar las dependencias (¿hash distinto o sin red?):\n" + escape(r.text)
-                          + f"\nSe ha vuelto a la versión anterior ({before[:10]}).")
-            audit.record("autoactualizar", NAME, "REVERTIDO", "fallaron las dependencias")
-            return 1
-    audit.record("autoactualizar", NAME, "OK", f"{VERSION} -> {nueva or 'desconocida'}")
-    console.print(f"[green]{NAME} actualizado a la versión {nueva or 'nueva'}.[/]")
-    if "install.sh" in changed:
-        console.print(f"[yellow]El instalador ha cambiado: ejecuta {escape(str(repo / 'install.sh'))} para aplicar "
-                      "los cambios del lanzador y de los permisos.[/]")
+    console.print(f"[green]{NAME} actualizado a la versión {escape(res.nueva or 'nueva')}.[/]")
+    if res.instalador_cambiado:
+        console.print(f"[yellow]El instalador ha cambiado: ejecuta {escape(str(paths.APP_DIR / 'install.sh'))} "
+                      "para aplicar los cambios del lanzador y de los permisos.[/]")
     return 0
 
 

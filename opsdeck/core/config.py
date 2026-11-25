@@ -36,6 +36,21 @@ DEFAULTS = {
         # true = ignorar las subredes locales y permitir SOLO las de redes_autorizadas.
         "solo_configuradas": "false",
     },
+    "verificacion": {
+        # Consultar los avisos de Ubuntu/Debian (OSV) para saber si un CVE ya está corregido en un
+        # paquete. Solo sale el identificador del CVE. false = usar solo lo que haya en caché.
+        "consultar_osv": "true",
+        # Servidor interactsh PROPIO e interno para las pruebas fuera de banda (Log4Shell, SSRF...).
+        # Vacío = esas plantillas no se lanzan. Nunca se usan los servidores públicos.
+        "interactsh_servidor": "",
+    },
+    "actualizacion": {
+        # Comprobar al abrir la interfaz si hay una versión nueva (solo consulta; no instala nada).
+        "comprobar_al_abrir": "true",
+    },
+    "interfaz": {
+        "tema": "opsdeck",              # opsdeck | claro | contraste
+    },
     "usuarios": {
         "shell": "/bin/bash",
         "longitud_password": "16",

@@ -26,6 +26,7 @@ from .sistema import Sistema
 from .tls import Tls
 from .triaje import Triaje
 from .usuarios import Usuarios
+from .verificacion import Verificacion
 from .web import Web
 
 MODULES = [
@@ -34,5 +35,5 @@ MODULES = [
     # Blue team
     Revision, Triaje, Bastionado, Antimalware, Rootkits, Integridad,
     # Ciberseguridad
-    Escaneo, Exposicion, Tls, Ssh, Smb, Web, Nuclei, Trafico, Informes, Fuentes,
+    Escaneo, Exposicion, Tls, Ssh, Smb, Web, Nuclei, Verificacion, Trafico, Informes, Fuentes,
 ]

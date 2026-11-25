@@ -5,8 +5,8 @@
 **Sistemas y ciberseguridad para Linux en una sola herramienta.**
 
 Administra equipos, únelos a Active Directory, revisa su seguridad, audita redes, servicios y TLS,
-comprueba los informes de Nessus y OpenVAS y responde a incidentes, desde un menú visual en la
-terminal o en una línea de comando.
+comprueba los informes de Nessus y OpenVAS, verifica de forma segura si sus CVE se cumplen de verdad y
+responde a incidentes, desde un menú visual en la terminal o en una línea de comando.
 
 [![Versión](https://img.shields.io/github/v/release/THRaven426/opsdeck?style=for-the-badge&label=versión&color=2ea44f)](https://github.com/THRaven426/opsdeck/releases/latest)
 [![Licencia](https://img.shields.io/badge/licencia-GPL--3.0-blue?style=for-the-badge)](LICENSE)
@@ -14,7 +14,7 @@ terminal o en una línea de comando.
 ![Plataforma](https://img.shields.io/badge/Debian_·_Ubuntu_·_Kali-probado-a81d33?style=for-the-badge&logo=linux&logoColor=white)
 [![Estrellas](https://img.shields.io/github/stars/THRaven426/opsdeck?style=for-the-badge&logo=github&color=f5c518)](https://github.com/THRaven426/opsdeck/stargazers)
 
-![Escaneo de red con resumen por equipo y recomendaciones](docs/img/principal.png)
+![Panel de inicio con el estado del equipo, del alcance y de las fuentes, y aviso de versión nueva](docs/img/home.png)
 
 </div>
 
@@ -50,7 +50,10 @@ terminal o en una línea de comando.
 | 🧭 **Se adapta a cada equipo** | En cada arranque detecta qué hay instalado y solo muestra lo que funciona ahí. Si mañana instalas xrdp, su módulo aparece solo. |
 | 📦 **Instala lo que falta, como apt** | Enseña los paquetes, las dependencias y el tamaño, y pide confirmación. Nada se instala sin un sí. |
 | 🎛️ **Sencilla por defecto, completa si la necesitas** | Cada herramienta se lanza con valores recomendados; las **opciones avanzadas** (velocidad, puertos, plantillas, cabeceras, proxy...) están a un clic. |
+| ✅ **Verifica antes de dar por buena una vulnerabilidad** | Para cada CVE de un análisis dice si **se cumple de verdad**, con pruebas que no explotan nada: compara el paquete con el parche de la distribución (*backports*) y lanza solo las plantillas y scripts seguros. Adiós a los falsos positivos «por versión». |
 | 🔁 **Del informe del escáner al «¿sigue saliendo?»** | Importa informes de Nessus y OpenVAS, reparte el trabajo y vuelve a verificar cada hallazgo tras corregirlo. |
+| 🖥️ **Interfaz cómoda** | Panel de inicio, búsqueda rápida (`/`), vista previa de cada acción, pestañas de salida, resultados y ayuda, y temas oscuro, claro y de alto contraste. |
+| ⬆️ **Se actualiza desde la propia interfaz** | Avisa al abrir si hay versión nueva, enseña sus cambios, la instala con el progreso a la vista y se reinicia. |
 | ❓ **Ayuda en cada pantalla** | La tecla `?` explica el módulo o la acción que tengas seleccionado, con el comando equivalente. |
 | 🧾 **Todo queda registrado** | Quién hizo qué y cuándo, en fichero con rotación y en el journal. Las contraseñas nunca se guardan. |
 | 🛟 **Difícil romper algo** | Confirmación en lo delicado, copia previa de las cuentas, barandilla de alcance de red y nada de cortar tu propio acceso remoto sin avisar. |
@@ -60,13 +63,16 @@ terminal o en una línea de comando.
 
 <div align="center">
 
-| TLS de todos los servicios del último escaneo | Informe de Nessus convertido en trabajo |
+| Verificación de los CVE del último escaneo | Actualizar sin salir de la herramienta |
 |:---:|:---:|
-| ![TLS y certificados](docs/img/tls.png) | ![Informes Nessus / OpenVAS](docs/img/informes.png) |
-| **Opciones avanzadas, solo si las pides** | **Catálogo: instalar lo que falta** |
-| ![Formulario con opciones avanzadas](docs/img/formulario.png) | ![Catálogo de módulos](docs/img/catalogo.png) |
+| ![Verificar vulnerabilidades: veredicto por CVE](docs/img/verificacion.png) | ![Ventana de actualización con los cambios](docs/img/actualizar.png) |
+| **Búsqueda rápida de módulos y acciones (/)** | **Formulario con opciones avanzadas, solo si las pides** |
+| ![Búsqueda rápida](docs/img/busqueda.png) | ![Formulario de Verificar un CVE](docs/img/formulario.png) |
+| **Resultados guardados: verificar sus hallazgos** | **Catálogo: instalar lo que falta** |
+| ![Resultados guardados](docs/img/resultados.png) | ![Catálogo de módulos](docs/img/catalogo.png) |
 
-<sub>Datos de un laboratorio de ejemplo (10.20.0.0/24, nombres inventados).</sub>
+<sub>Capturas de la interfaz real con datos de un laboratorio de ejemplo (nombres inventados). La verificación
+se ejecutó de verdad contra servicios simulados en 127.20.0.0/24 con los avisos reales de Ubuntu y Debian.</sub>
 
 </div>
 
@@ -219,14 +225,24 @@ opsdeck
 
 > Escribe solo `opsdeck`: pide la contraseña de `sudo` ella sola. No hace falta `sudo opsdeck`.
 
+Al abrirla verás el **panel de inicio**: el estado del equipo, la versión de opsdeck (y si hay una
+nueva), el alcance autorizado, las fuentes de datos, los módulos y los últimos resultados. A la
+izquierda están los módulos; al elegir uno ves sus acciones y, a la derecha, **qué hace la acción
+resaltada, qué datos pide y si cambia el sistema**. Debajo, las pestañas **Salida**, **Resultados del
+módulo** y **Ayuda del módulo**.
+
 | Tecla | Qué hace |
 |:---:|---|
 | `↑` `↓` `Intro` | Moverse y elegir (también con el ratón) |
+| `/` | **Buscar** cualquier módulo o acción escribiendo parte del nombre (sin importar tildes) |
 | `?` | Ayuda de lo que tengas seleccionado |
+| `u` | **Actualizar opsdeck**: cambios de la versión nueva, instalar y reiniciar |
+| `g` | Resultados guardados (y *Verificar hallazgos* de un análisis con `v`) |
 | `c` | Catálogo: todos los módulos, instalar lo que falta (`i`) y las herramientas opcionales (`o`) |
-| `g` | Resultados guardados |
 | `l` | Registro de cambios |
+| `t` | Tema: oscuro, claro o alto contraste (se guarda) |
 | `s` | Detener la acción en curso |
+| `Esc` | Volver a la lista de módulos |
 | `q` | Salir |
 
 En los formularios: `Intro` acepta, `Esc` cancela, `F1` es la ayuda de esa acción y la casilla
@@ -243,6 +259,9 @@ opsdeck tls revisar                               # TLS de todos los servicios d
 opsdeck nuclei dirigido --si                      # nuclei solo con las plantillas de lo detectado
 opsdeck informes importar --fichero informe.nessus
 opsdeck informes verificar --si                   # ¿siguen ahí los hallazgos del informe?
+opsdeck verificacion cve --cve CVE-2024-6387 --objetivo 10.20.0.20:22 --si   # ¿se cumple de verdad?
+opsdeck verificacion hallazgos --origen escaneo --si                         # los CVE del último escaneo
+opsdeck verificacion local --cve CVE-2024-3094    # ¿afecta a los paquetes de este equipo?
 opsdeck registro 20 jperez                        # quién tocó esa cuenta
 ```
 
@@ -255,21 +274,40 @@ preguntar. La guía completa está en [HELP.md](HELP.md) y dentro de la herramie
 2. Sobre el último escaneo: *Servicios expuestos*, *TLS y certificados*, *Auditoría SSH*, *SMB* y
    *Web y TLS › Revisar las webs del último escaneo*.
 3. *Vulnerabilidades (nuclei) › Análisis dirigido por el último escaneo*.
-4. Corregir y repetir; o, si partes de un informe de Nessus/OpenVAS, *Informes › Volver a verificar*.
+4. *Verificar vulnerabilidades › Verificar hallazgos de un análisis*: confirma o descarta los CVE del
+   escaneo, de nuclei o de un informe de Nessus/OpenVAS antes de repartir el trabajo.
+5. Corregir y repetir; o, si partes de un informe de Nessus/OpenVAS, *Informes › Volver a verificar*.
 
 ## Actualizar
 
 ### Instalación con git (opciones 1 y 3)
 
+**Desde la interfaz (recomendado).** Al abrir `opsdeck` se comprueba si hay una versión nueva (solo
+consulta el repositorio: no instala nada por su cuenta). Si la hay, aparece una barra arriba y el aviso
+en el panel de inicio. Pulsa `u` (o el botón *Ver cambios y actualizar*):
+
+1. Se abre una ventana con la versión instalada, la nueva y **sus cambios** (el registro de cambios
+   publicado, solo informativo).
+2. *Instalar la versión nueva* muestra el progreso: descarga exactamente la revisión anunciada, actualiza
+   el entorno Python con las versiones y hashes fijados y, si eso falla, **vuelve a la versión anterior**.
+3. Al terminar pide **reiniciar** la herramienta (hasta entonces no deja lanzar acciones, para no mezclar
+   código viejo y nuevo). Si el instalador ha cambiado, se aplica (`install.sh --si`) antes de reabrirla.
+
+**Desde la línea de comandos** (lo mismo, sin interfaz):
+
 ```bash
 opsdeck autoactualizar
 ```
 
-Indica la versión instalada y la nueva, pide confirmación, descarga la versión nueva (solo desde un
-origen https, sin ejecutar hooks de git) y actualiza su entorno Python con las versiones y hashes fijados; si eso
-falla, vuelve a la versión anterior. Conserva la configuración, los datos y los registros. Si avisa
-de que el instalador ha cambiado, ejecuta `sudo /opt/opsdeck/install.sh` para aplicar el lanzador
-nuevo. Después conviene:
+En los dos casos solo se actualiza desde un origen https, sin ejecutar hooks de git, y se conservan la
+configuración, los datos y los registros. La comprobación al abrir se puede desactivar con
+`[actualizacion] comprobar_al_abrir = false`.
+
+> [!NOTE]
+> **Desde la 2.4.x** la interfaz todavía no sabe actualizarse: actualiza esa vez con
+> `opsdeck autoactualizar`. A partir de la 2.5.0 ya puedes hacerlo con `u`.
+
+Después de actualizar conviene:
 
 ```bash
 opsdeck instalar todo --opcionales   # herramientas que pidan los módulos nuevos
@@ -350,6 +388,7 @@ quitan con el gestor de paquetes (`sudo apt remove ...`).
 | **SMB y Windows** | completa | SMBv1, firma SMB (relay NTLM), MS17-010 y similares, recursos accesibles; netexec por protocolo con enumeración de solo lectura y módulos de comprobación; enum4linux-ng |
 | **Web y TLS** | completa | Cabeceras, cookies, métodos HTTP, formularios sin cifrar, páginas por defecto, ficheros sensibles (.git, .env, copias, phpinfo...); whatweb, nikto, testssl, ffuf/feroxbuster/gobuster, wafw00f y wpscan |
 | **Vulnerabilidades (nuclei)** | completa | Por severidad, **dirigido por los productos del último escaneo**, paneles, credenciales por defecto y fugas; todas las opciones de nuclei |
+| **Verificar vulnerabilidades** | completa | **Confirma o descarta los CVE** de un análisis (nuclei, escaneo/vulners, Nessus/OpenVAS) o uno concreto: compara el paquete con la corrección publicada por Ubuntu/Debian (*backports*, también para los paquetes de este equipo) y lanza solo las plantillas de nuclei y los scripts NSE seguros. Veredicto **CONFIRMADA / NO APLICA / NO REPRODUCIDA / NO CONCLUYENTE** con sus evidencias. [Detalle](#verificación-de-vulnerabilidades) |
 | **Tráfico de red** | completa | Quién habla con quién, DNS, protocolos sin cifrar, suplantación ARP; descubrimiento pasivo con LLMNR/NBT-NS/mDNS; Responder en modo análisis |
 | **Informes Nessus / OpenVAS** | completa | Importa .nessus, XML, CSV o PDF; resumen, plan de verificación con listas de objetivos y **re-verificación** (sigue / no reproducido / no accesible) |
 | **Fuentes de datos** | ligera / completa | Antigüedad y actualización de las bases de detección: plantillas de nuclei, exploit-db y parches |
@@ -357,6 +396,29 @@ quitan con el gestor de paquetes (`sudo apt remove ...`).
 Tras un análisis, opsdeck añade **«Recomendaciones (siguiente paso)»**: qué confirmar, mitigar o
 parchear, con qué módulo comprobarlo de nuevo y, cuando aplica, si existe **exploit público** en
 exploit-db para priorizar. Recomienda y señala; no explota nada.
+
+### Verificación de vulnerabilidades
+
+Los escáneres marcan muchos CVE **solo por el número de versión**. Ubuntu y Debian corrigen sin cambiar
+ese número (OpenSSH 9.6p1 sigue siendo 9.6p1 con el parche), así que buena parte de esos hallazgos son
+falsos positivos. Este módulo comprueba cada CVE con tres pruebas, **ninguna de las cuales explota nada**
+(no dan acceso, no cambian nada en el objetivo y no prueban contraseñas):
+
+| Prueba | Qué hace | Límites |
+|---|---|---|
+| **Paquetes de la distribución** | Compara la versión del paquete con la versión en la que Ubuntu o Debian publicó la corrección (avisos [OSV](https://osv.dev)). La versión sale del banner cuando la incluye (OpenSSH), de lo que indiques o, con el objetivo `local`, de los paquetes instalados. | Solo sale a internet el identificador del CVE; caché de 3 días; `[verificacion] consultar_osv = false` para no consultar |
+| **nuclei** | Las plantillas de ese CVE | Nunca `dos`, `fuzz`, `intrusive`, `brute-force`, `default-login` ni DAST, ni tipos `code`, `headless`, `javascript` o `file`; 10 peticiones/s; las `rce` solo si lo marcas |
+| **nmap (NSE)** | Los scripts de ese CVE | Solo los que nmap clasifica a la vez como `vuln` y `safe` |
+
+Las pruebas **fuera de banda** (Log4Shell, SSRF, ejecución ciega) necesitan que el objetivo se conecte a
+un servidor de escucha *interactsh*. Están **desactivadas por defecto** porque nuclei usaría servidores
+públicos; si tienes uno propio en la red interna, indícalo en `[verificacion] interactsh_servidor` (se
+rechazan los públicos y los que no resuelvan a una dirección interna o autorizada).
+
+Todo pasa por la barandilla de alcance, cada orden se muestra antes de lanzarse y queda en el registro.
+Cada verificación se guarda en **su propia carpeta** (`resultados/verificacion/`) con el veredicto, las
+órdenes y las evidencias; el análisis de origen solo se lee. *Qué comprobaciones hay para un CVE*
+enseña qué se lanzaría sin enviar nada.
 
 > La administración del propio Active Directory (altas, grupos, GPO) queda fuera a propósito:
 > opsdeck configura y revisa el lado Linux.
@@ -457,7 +519,8 @@ install.sh / uninstall.sh   instalación con confirmación y elección de edici�
 HELP.md                     guía de uso (la misma que se ve con ?)
 opsdeck/
   cli.py                    línea de comandos
-  core/                     detección, paquetes, ediciones, auditoría, alcance, recomendaciones, informes
+  core/                     detección, paquetes, ediciones, auditoría, alcance, recomendaciones, informes,
+                            actualización, avisos OSV y versiones de paquetes
   modules/                  un fichero por módulo
   ui/                       interfaz visual (Textual)
   datos/                    diccionarios mínimos incluidos
@@ -487,7 +550,8 @@ comandos, la detección y la instalación de dependencias salen de esa definici�
   tiene autorización, y queda en la auditoría. No es un muro contra quien tenga root, sino un
   control deliberado contra errores de alcance.
 - **Confirma, no explota.** opsdeck detecta, confirma, prioriza y recomienda. No incluye exploits,
-  cargas maliciosas, fuerza bruta, volcado de credenciales ni persistencia. Las pruebas de
+  cargas maliciosas, fuerza bruta, volcado de credenciales ni persistencia. La verificación de
+  vulnerabilidades solo usa comprobaciones de versión de paquete y pruebas clasificadas como seguras. Las pruebas de
   credenciales de fábrica y las intrusivas van aparte, desactivadas por defecto y con confirmación.
 - **Capturar tráfico afecta a la privacidad** de quien usa la red: hazlo dentro del procedimiento de
   tu organización. El resumen usa metadatos y no muestra contenido ni credenciales.
@@ -525,9 +589,9 @@ Las pruebas crean y borran cuentas y ficheros de prueba: ejecútalas en una máq
 - [x] Dominio: revisión única, diagnóstico de contraseña caducada y reparto por ediciones
 - [x] Opciones avanzadas en todas las herramientas; herramientas opcionales instalables
 - [x] TLS de cualquier servicio, auditoría SSH, servicios expuestos, informes Nessus/OpenVAS con re-verificación
-- [ ] Hallazgos unificados y persistentes con estado (abierto / corregido / aceptado)
+- [x] Verificación segura de vulnerabilidades (backports, nuclei y NSE seguros) para descartar falsos positivos
+- [x] Interfaz nueva (inicio, búsqueda, vista previa, pestañas, temas) con actualización integrada
 - [ ] Flujos guiados: alta de equipo, auditoría de red, securizar un equipo
-- [ ] Informe consolidado por equipo y por red
 - [ ] RHEL, SUSE y Arch probados
 - [ ] Herramienta hermana para Windows, centrada en administrar Active Directory
 

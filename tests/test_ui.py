@@ -212,3 +212,151 @@ async def test_opciones_avanzadas_ocultas_hasta_pedirlas():
         vals = scr.values()
         assert vals["puertos"] == "22,443" and "perfil" in vals and "adv-toggle" not in vals
         await pilot.press("escape")
+
+
+# ---------------------------------------------------------------- interfaz 2.5
+
+async def test_inicio_busqueda_y_tema():
+    from opsdeck.ui.app import SearchScreen
+    from textual.widgets import ContentSwitcher
+    app = OpsdeckApp()
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        assert app.main.query_one("#views", ContentSwitcher).current == "home"
+        assert "Equipo" in app.main.query_one("#card-host").border_title
+        await pilot.press("slash")
+        await pilot.pause()
+        assert isinstance(app.screen, SearchScreen)
+        await pilot.press(*"ficha usu")          # sin tildes y en cualquier orden
+        await pilot.pause()
+        assert [e[2] for e in app.screen.shown] == ["ficha"]
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, FormScreen) and app.screen.action_def.id == "ficha"
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.current.id == "usuarios"
+        assert app.main.query_one("#views", ContentSwitcher).current == "module"
+        before = app.theme
+        await pilot.press("t")
+        await pilot.pause()
+        assert app.theme != before
+
+
+async def test_escribir_en_un_campo_no_dispara_teclas():
+    from opsdeck.ui.app import SearchScreen
+    app = OpsdeckApp()
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        await pilot.press("slash")
+        await pilot.pause()
+        await pilot.press(*"quit")              # «q» y «u» son letras, no salir ni actualizar
+        await pilot.pause()
+        assert app.is_running and isinstance(app.screen, SearchScreen)
+
+
+async def test_vista_previa_y_pestanas_del_modulo():
+    from textual.widgets import Markdown, TabbedContent
+    app = OpsdeckApp()
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        app.goto_module("sistema")
+        await pilot.pause()
+        acts = app.main.query_one("#actions", OptionList)
+        aids = [acts.get_option_at_index(i).id for i in range(acts.option_count)]
+        acts.highlighted = aids.index("actualizar")
+        await pilot.pause()
+        assert "Cambia el sistema" in app.main.query_one("#action-md", Markdown).source
+        acts.highlighted = aids.index("resumen")
+        await pilot.press("enter")
+        await wait_idle(pilot, app)
+        assert app.main.query_one("#tabs", TabbedContent).active == "tab-out"
+        assert "Kernel" in output_text(app)
+
+
+async def test_actualizar_desde_la_interfaz(tmp_path, monkeypatch):
+    """Comprobar, ver los cambios, instalar con progreso y pedir el reinicio, con repositorios git reales."""
+    import subprocess
+    from opsdeck.core import actualizar, system
+    from opsdeck.ui import app as ui
+    from opsdeck.ui.app import UpdateScreen
+    from textual.widgets import Markdown
+
+    ident = ["-c", "user.name=p", "-c", "user.email=p@example.invalid", "-c", "commit.gpgsign=false"]
+
+    def git(repo, *args):
+        r = subprocess.run(["git", "-C", str(repo), *ident, *args], capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        return r.stdout.strip()
+
+    up = tmp_path / "up"
+    (up / "opsdeck").mkdir(parents=True)
+    git(tmp_path, "init", "-q", "-b", "main", str(up))
+    (up / "opsdeck" / "__init__.py").write_text('VERSION = "2.4.3"\n')
+    git(up, "add", ".")
+    git(up, "commit", "-qm", "base")
+    inst = tmp_path / "inst"
+    subprocess.run(["git", "clone", "-q", str(up), str(inst)], check=True)
+    git(inst, "remote", "set-url", "origin", "https://example.invalid/opsdeck.git")
+    (up / "opsdeck" / "__init__.py").write_text('VERSION = "2.5.0"\n')
+    (up / "CHANGELOG.md").write_text("# Registro\n\n## 2.5.0 — hoy\n\n- Novedad visible \x1b[31m\n\n## 2.4.3 — ayer\n\n- vieja\n")
+    git(up, "add", ".")
+    git(up, "commit", "-qm", "nueva")
+    real_run = system.run
+
+    def fake_run(cmd, **kw):
+        if "fetch" in cmd:
+            return real_run(["git", "-C", str(inst), "fetch", "--quiet", str(up), "+refs/heads/main:refs/remotes/origin/main"])
+        return real_run(cmd, **kw)
+    monkeypatch.setattr(actualizar.paths, "APP_DIR", inst)
+    monkeypatch.setattr(system, "run", fake_run)
+    monkeypatch.setattr(ui, "VERSION", "2.4.3")
+    monkeypatch.setattr(actualizar.audit, "record", lambda *a, **k: None)
+
+    app = OpsdeckApp()
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        await pilot.press("u")
+        for _ in range(50):
+            await pilot.pause(0.1)
+            if app.update_state is not None:
+                break
+        await pilot.pause(0.3)
+        scr = app.screen
+        assert isinstance(scr, UpdateScreen) and app.update_state.hay_nueva
+        md = scr.query_one("#upd-md", Markdown).source
+        assert "Novedad visible" in md and "vieja" not in md and "\x1b" not in md
+        assert app.main.query_one("#update-banner").display
+        await pilot.click("#upd-install")
+        for _ in range(100):
+            await pilot.pause(0.1)
+            if app.update_done is not None:
+                break
+        assert app.update_done and app.update_done.ok
+        assert git(inst, "rev-parse", "HEAD") == git(up, "rev-parse", "HEAD")
+        assert scr.query_one("#upd-restart").display
+        # con un reinicio pendiente no se lanzan acciones con el código a medias
+        await pilot.click("#upd-restart")
+        await pilot.pause(0.3)
+        assert app.restart
+
+
+async def test_verificar_hallazgos_desde_resultados(tmp_path, monkeypatch):
+    from opsdeck.core import edition, results
+    from opsdeck.ui.app import ResultsScreen
+    monkeypatch.setattr(edition, "allowed_full", lambda: (True, ""))
+    monkeypatch.setattr(results, "ROOT", tmp_path / "res")
+    d = results.new_dir("nuclei", "analisis_x")
+    (d / "hallazgos.jsonl").write_text('{"template-id": "CVE-2024-6387", "host": "127.0.0.1:22"}\n')
+    app = OpsdeckApp()
+    async with app.run_test(size=(150, 46)) as pilot:
+        await pilot.pause()
+        await pilot.press("g")
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, ResultsScreen) and app.screen.query_one("#res-verify").display
+        await pilot.press("v")
+        await pilot.pause(0.3)
+        assert isinstance(app.screen, FormScreen) and app.screen.action_def.id == "hallazgos"
+        vals = app.screen.values()
+        assert vals["origen"] == "nuclei" and vals["carpeta"] == d.name
+        await pilot.press("escape")
