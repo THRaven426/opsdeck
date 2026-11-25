@@ -19,14 +19,21 @@ Escribe solo `opsdeck`: la herramienta se relanza sola con `sudo` y te pide tu c
 |---|---|
 | ↑ ↓ e Intro | Moverse y elegir (también con el ratón) |
 | Tab | Pasar de la lista de módulos a la de acciones |
-| Esc | Volver de la lista de acciones a la de módulos |
+| Esc | Volver a la lista de módulos |
+| **/** | **Buscar** cualquier módulo o acción escribiendo parte del nombre |
 | **?** | **Ayuda de lo que tengas seleccionado**: módulo, acción o esta guía |
+| u | **Actualizar opsdeck**: ver los cambios de la versión nueva, instalarla y reiniciar |
+| g | Resultados guardados: escaneos, análisis, revisiones, evidencias (v = verificar sus hallazgos) |
 | c | Catálogo: todos los módulos y su estado |
 | r | Volver a detectar qué hay instalado en el equipo |
-| g | Resultados guardados: escaneos, análisis, revisiones, evidencias |
 | l | Registro de cambios (quién hizo qué y cuándo) |
+| t | Cambiar el tema: oscuro, claro o alto contraste |
+| h | Volver al panel de inicio |
 | s | Detener la acción en curso (escaneos y análisis largos) |
 | q | Salir |
+
+Al abrir verás el **panel de inicio** con el estado del equipo, de la herramienta (y si hay una
+versión nueva), del alcance autorizado, de las fuentes de datos y los últimos resultados.
 
 **En los formularios:** Intro = aceptar · Esc = cancelar · **F1 = ayuda** de esa acción ·
 Espacio = marcar o desmarcar casillas.
@@ -36,16 +43,25 @@ avanzadas»**. Sin tocarla, la herramienta se lanza con los valores recomendados
 ajustar velocidad, hilos, puertos, plantillas, etiquetas, cabeceras, proxy, el modo de cada
 herramienta y añadir opciones propias. F1 explica cada una.
 
-1. Elige un **módulo** a la izquierda.
-2. Elige una **acción**. Las marcadas con **●** cambian algo en el sistema.
+1. Elige un **módulo** a la izquierda (o pulsa **/** y búscalo).
+2. Elige una **acción**. Las marcadas con **●** cambian algo en el sistema. A la derecha ves qué hace,
+   qué datos pide y su orden equivalente en la línea de comandos.
 3. Si necesita datos, se abre un formulario. Las acciones delicadas piden confirmación.
-4. El resultado aparece en el panel inferior.
+4. El resultado aparece en la pestaña **Salida**. En **Resultados del módulo** están sus ejecuciones
+   guardadas y en **Ayuda del módulo**, su guía.
+
+## Actualizar opsdeck
+
+Al abrirse, opsdeck comprueba si hay una versión nueva (solo consulta; no instala nada). Si la hay,
+lo verás en una barra arriba y en el panel de inicio. Pulsa **u**: se muestran la versión instalada,
+la nueva y sus cambios. *Instalar la versión nueva* enseña el progreso y, si algo falla, vuelve a la
+versión anterior. Al terminar hay que **reiniciar** la herramienta (botón *Reiniciar ahora*).
 
 ## Ediciones
 
 - **Ligera**: administración diaria (todo *Sistemas*), la *Revisión de seguridad* y el escaneo de red básico.
 - **Completa**: además, tráfico, triaje de incidentes, bastionado, antimalware, auditoría de SMB,
-  web, TLS, SSH, servicios expuestos, vulnerabilidades e informes de Nessus/OpenVAS. Estos módulos solo los usan los miembros del grupo `opsdeck-completa`.
+  web, TLS, SSH, servicios expuestos, vulnerabilidades, verificación de vulnerabilidades e informes de Nessus/OpenVAS. Estos módulos solo los usan los miembros del grupo `opsdeck-completa`.
 
 `opsdeck edicion` dice cuál tienes y quién tiene acceso. Se cambia con
 `sudo ./install.sh --edicion completa` (o `ligera`). En el Catálogo, lo que no es de tu edición o
@@ -92,11 +108,13 @@ no tienes permiso para usar aparece como "no aplica" con el motivo.
 | SMB y Windows | SMBv1, firma SMB, recursos compartidos; netexec y enum4linux-ng si están |
 | Web y TLS | Cabeceras, cookies, métodos, ficheros sensibles, certificados; nikto, testssl, rutas, WAF, WordPress |
 | Vulnerabilidades (nuclei) | Vulnerabilidades conocidas comprobadas de verdad, también dirigidas por el último escaneo |
+| Verificar vulnerabilidades | ¿Se cumple de verdad este CVE? Confirma o descarta los hallazgos de un análisis con pruebas seguras (versión de paquete con parche de la distribución, plantillas y scripts seguros) |
 | Tráfico de red | Capturar y resumir tráfico; ver qué equipos hay (y quién usa LLMNR/NBT-NS) sin enviar nada |
 | Informes Nessus / OpenVAS | Importar el informe del escáner, repartir el trabajo y volver a verificar tras corregir |
 
 **Flujo típico de una auditoría:** *Escaneo* (perfil estándar o infraestructura) → *Servicios
-expuestos*, *TLS*, *SSH*, *SMB* y *Web* sobre el último escaneo → *nuclei* dirigido → corregir →
+expuestos*, *TLS*, *SSH*, *SMB* y *Web* sobre el último escaneo → *nuclei* dirigido → *Verificar
+vulnerabilidades* para descartar falsos positivos → corregir →
 repetir o, si partes de un informe de Nessus/OpenVAS, *Informes › Volver a verificar*.
 
 Algunos módulos dependen de programas que quizá no tengas: aparecen en el *Catálogo* para

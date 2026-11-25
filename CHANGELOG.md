@@ -3,6 +3,53 @@
 Las versiones anteriores a la 2.4.2 están descritas en
 [Releases](https://github.com/THRaven426/opsdeck/releases).
 
+## 2.5.0 — 2026-11-25 — Verificación de vulnerabilidades e interfaz nueva
+
+Versión con funciones nuevas. No cambia el lanzador ni los permisos: basta con actualizar. Desde la
+2.4.x se actualiza una última vez con `opsdeck autoactualizar`; a partir de la 2.5.0, también desde la
+propia interfaz (tecla `u`).
+
+### Verificación de vulnerabilidades (módulo nuevo, edición completa)
+
+- Confirma o descarta de forma segura los CVE que marcan los análisis, para quitar falsos positivos.
+  Cada CVE recibe un veredicto: **CONFIRMADA**, **NO APLICA**, **NO REPRODUCIDA** o **NO CONCLUYENTE**,
+  con la prueba que lo decide y sus evidencias.
+- **Paquetes de la distribución (backports):** compara la versión del paquete (del banner, indicada a
+  mano o, con el objetivo `local`, la instalada en este equipo) con la versión en la que Ubuntu o
+  Debian publicó la corrección (avisos OSV). Es el falso positivo más habitual de Nessus, OpenVAS y
+  vulners: «OpenSSH 9.6p1 es vulnerable» cuando el paquete ya lleva el parche. Solo sale el
+  identificador del CVE; caché local de 3 días y opción `[verificacion] consultar_osv`.
+- **nuclei:** solo las plantillas seguras de ese CVE (nunca `dos`, `fuzz`, `intrusive`, `brute-force`,
+  `default-login` ni DAST; nunca de tipo `code`, `headless`, `javascript` o `file`), a 10 peticiones por
+  segundo. Las plantillas `rce` solo con permiso expreso.
+- **nmap:** solo los scripts NSE de ese CVE clasificados a la vez como `vuln` y `safe`.
+- Pruebas fuera de banda (interactsh) desactivadas por defecto; solo con un servidor propio e interno
+  (`[verificacion] interactsh_servidor`). Se rechazan los servidores públicos.
+- Verificación por lotes de los CVE del último análisis de nuclei, del último escaneo (vulners) o de
+  un informe de Nessus/OpenVAS importado, también desde *Resultados* con el botón *Verificar hallazgos*.
+- Cada verificación se guarda en su propia carpeta; el análisis de origen solo se lee.
+
+### Interfaz nueva
+
+- **Panel de inicio** con el estado del equipo, de la herramienta, del alcance autorizado, de las
+  fuentes de datos, de los módulos y los últimos resultados, y accesos rápidos.
+- **Búsqueda rápida** (tecla `/`) de cualquier módulo o acción, sin importar tildes.
+- Vista de módulo con **vista previa de la acción** (qué hace, qué pide, si cambia el sistema y su orden
+  de línea de comandos) y pestañas **Salida**, **Resultados del módulo** y **Ayuda del módulo**.
+- Indicador de ejecución con tiempo transcurrido, colores por veredicto y severidad en las tablas
+  (siempre con símbolo o texto, no solo color) y tres temas: oscuro, claro y alto contraste (tecla `t`).
+
+### Actualización integrada
+
+- Al abrir la interfaz se comprueba si hay una versión nueva (solo consulta; se puede desactivar con
+  `[actualizacion] comprobar_al_abrir`). Si la hay, se avisa en una barra y en el panel de inicio.
+- Tecla `u`: ventana con la versión instalada y la nueva y el registro de cambios (informativo), botón
+  para instalar con el progreso a la vista y, al terminar, reinicio de la herramienta. Si el
+  instalador ha cambiado, se aplica (`install.sh --si`) antes de volver a abrirla.
+- Misma lógica que `opsdeck autoactualizar` (que sigue funcionando): solo https, sin hooks de git,
+  exactamente el commit anunciado y vuelta atrás si fallan las dependencias. El texto que llega del
+  repositorio se limpia de secuencias de terminal antes de mostrarse.
+
 ## 2.4.3 — 2026-11-25 — Aviso de actualización más claro
 
 Versión de parche. No cambia los módulos, la configuración ni el lanzador.

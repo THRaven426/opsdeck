@@ -1,37 +1,130 @@
+/* opsdeck · hoja de estilos de la interfaz.
+   Los estados siempre llevan símbolo y texto (✓ ✗ ⚠ ●): nunca se informa solo con el color. */
+
 Screen {
     layout: vertical;
+    background: $background;
+}
+
+Header {
+    background: $panel;
 }
 
 #body {
     height: 1fr;
 }
 
-#sidebar {
-    width: 32;
-    border-right: solid $primary-darken-2;
+/* ---------- barra de actualización ---------- */
+
+#update-banner {
+    height: 3;
+    background: $success 25%;
     padding: 0 1;
 }
 
-#sidebar .section {
-    color: $text-muted;
+#update-text {
+    width: 1fr;
+    height: 3;
+    content-align: left middle;
     text-style: bold;
-    margin-top: 1;
+}
+
+#update-banner Button {
+    margin: 0 0 0 1;
+    min-width: 30;
+}
+
+/* ---------- columna de módulos ---------- */
+
+#sidebar {
+    width: 36;
+    background: $surface;
+    border-right: tall $panel;
+    padding: 0 0;
+}
+
+#brand {
+    height: 3;
+    padding: 1 2;
+    background: $primary 20%;
+    color: $text;
 }
 
 #modules {
     height: 1fr;
     border: none;
+    background: $surface;
+    padding: 1 1 0 1;
 }
 
-#main {
+#modules:focus {
+    border-left: wide $accent;
+}
+
+#modules > .option-list--option-highlighted {
+    text-style: bold;
+}
+
+#sidebar-hint {
+    height: 1;
+    color: $text-muted;
+    padding: 0 2;
+}
+
+/* ---------- vistas ---------- */
+
+#views {
     width: 1fr;
+    height: 1fr;
+}
+
+#home {
+    padding: 1 2;
+}
+
+#home-title {
+    margin-bottom: 1;
+}
+
+#cards {
+    grid-size: 3;
+    grid-gutter: 1 2;
+    grid-rows: auto;
+    height: auto;
+}
+
+#card-results {
+    margin-top: 1;
+    min-height: 5;
+}
+
+.card {
+    height: auto;
+    min-height: 8;
+    border: round $primary 60%;
+    border-title-color: $accent;
+    border-title-style: bold;
+    padding: 0 1;
+    background: $surface;
+}
+
+#quick {
+    height: auto;
+    margin-top: 1;
+}
+
+#quick Button {
+    margin-right: 1;
+    min-width: 16;
+}
+
+#module {
     padding: 0 1;
 }
 
 #mod-title {
-    text-style: bold;
-    color: $accent;
     margin-top: 1;
+    height: 1;
 }
 
 #mod-summary {
@@ -39,37 +132,86 @@ Screen {
     margin-bottom: 1;
 }
 
+#mod-top {
+    height: 16;
+}
+
 #actions {
-    height: auto;
-    max-height: 45%;
-    border: round $primary-darken-2;
+    width: 3fr;
+    height: 100%;
+    border: round $primary 60%;
+    border-title-color: $accent;
+    background: $surface;
+}
+
+#actions:focus {
+    border: round $accent;
+}
+
+#action-preview {
+    width: 2fr;
+    height: 100%;
+    margin-left: 1;
+    padding: 0 1;
+    border: round $panel;
+    background: $surface;
+}
+
+#action-md {
+    margin: 0;
+    background: $surface;
+}
+
+#tabs {
+    height: 1fr;
+    margin-top: 1;
+}
+
+#tabs TabPane {
+    padding: 0;
 }
 
 #output {
     height: 1fr;
-    border: round $primary-darken-3;
-    margin-top: 1;
+    border: round $panel;
+    background: $surface;
+    scrollbar-size-vertical: 1;
+}
+
+#mod-results {
+    height: 1fr;
 }
 
 #status {
     height: 1;
-    color: $text-muted;
+    background: $panel;
+    color: $text;
+    padding: 0 1;
 }
 
 /* ---------- ventanas ---------- */
 
 ModalScreen {
     align: center middle;
+    background: $background 70%;
 }
 
 .dialog {
-    width: 90;
+    width: 92;
     max-width: 95%;
     height: auto;
     max-height: 90%;
     border: thick $primary;
     background: $surface;
     padding: 1 2;
+}
+
+.dialog.wide {
+    width: 120;
+}
+
+.dialog.danger {
+    border: thick $warning;
 }
 
 .dialog .dialog-title {
@@ -83,12 +225,19 @@ ModalScreen {
     margin-bottom: 1;
 }
 
+.dialog .keys {
+    color: $text-muted;
+    text-style: italic;
+}
+
 .dialog .field-label {
     margin-top: 1;
+    text-style: bold;
 }
 
 .dialog #error {
     color: $error;
+    text-style: bold;
     height: auto;
 }
 
@@ -112,7 +261,45 @@ ModalScreen {
     max-height: 75vh;
 }
 
-/* ---------- catálogo ---------- */
+#search-dialog {
+    width: 90;
+}
+
+#search-results {
+    height: auto;
+    max-height: 22;
+    margin-top: 1;
+    border: round $panel;
+}
+
+#update-dialog #upd-versions {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#upd-changes {
+    height: auto;
+    max-height: 55vh;
+    border: round $panel;
+    padding: 0 1;
+}
+
+#upd-progress {
+    margin: 1 0;
+}
+
+#upd-log {
+    height: 10;
+    border: round $panel;
+}
+
+/* ---------- catálogo y resultados ---------- */
+
+#screen-summary {
+    color: $text-muted;
+    padding: 1 2 0 2;
+    margin-bottom: 1;
+}
 
 #catalog-table {
     height: 1fr;
@@ -120,7 +307,7 @@ ModalScreen {
 
 #catalog-log {
     height: 12;
-    border: round $primary-darken-3;
+    border: round $panel;
 }
 
 #catalog-buttons {
@@ -130,6 +317,36 @@ ModalScreen {
 
 #catalog-buttons Button {
     margin-right: 2;
+}
+
+#res-sidebar {
+    width: 64;
+    border-right: tall $panel;
+}
+
+#res-main {
+    width: 1fr;
+    padding: 0 1;
+}
+
+#res-actions {
+    height: auto;
+}
+
+#res-path {
+    width: 1fr;
+    height: 3;
+    content-align: left middle;
+}
+
+#res-files {
+    height: auto;
+    border: round $panel;
+}
+
+#res-view {
+    height: 1fr;
+    border: round $panel;
 }
 
 #adv-box {

@@ -124,6 +124,8 @@ async def test_tui_muestra_datos_con_corchetes():
         assert isinstance(app.screen, ConfirmScreen)
         await pilot.press("escape")
         await pilot.pause()
+        app.goto_module("sistema")              # el panel de salida está en la vista del módulo
+        await pilot.pause()
         log = app.main.query_one("#output", RichLog)
         out = TuiOut(app, log)
         out._w = log.write
