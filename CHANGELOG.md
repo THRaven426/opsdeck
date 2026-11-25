@@ -3,6 +3,12 @@
 Las versiones anteriores a la 2.4.2 están descritas en
 [Releases](https://github.com/THRaven426/opsdeck/releases).
 
+## Sin publicar
+
+- `autoactualizar` ya no lista los commits pendientes: solo indica la versión instalada y la nueva antes
+  de pedir confirmación, e instala exactamente el commit anunciado. El número de versión remoto se lee
+  como texto y solo se muestra si tiene forma de versión; si no cambia, se indica la revisión.
+
 ## 2.4.2 — 2026-11-24 — Revisión de seguridad
 
 Versión de correcciones: tres rondas de revisión de seguridad y funcionamiento e integración continua.

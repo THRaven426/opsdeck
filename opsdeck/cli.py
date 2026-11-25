@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import getpass
+import re
 import sys
 
 from rich.console import Console
@@ -253,6 +254,17 @@ def cmd_resultados(args: list[str]) -> int:
     return 0
 
 
+_VERSION_RE = re.compile(r'^VERSION\s*=\s*"(\d{1,4}(?:\.\d{1,4}){1,3})"\s*$', re.M)
+
+
+def _remote_version(git: list[str], rev: str) -> str:
+    """Número de versión de la rama remota, leído como texto (sin importar ni ejecutar nada). Solo se
+    acepta un número con forma de versión: lo que venga del remoto no llega tal cual a la terminal."""
+    r = system.run(git + ["show", f"{rev}:opsdeck/__init__.py"])
+    m = _VERSION_RE.search(r.out) if r.ok else None
+    return m.group(1) if m else ""
+
+
 def cmd_autoactualizar(yes: bool) -> int:
     repo = paths.APP_DIR
     if not (repo / ".git").exists():
@@ -274,22 +286,30 @@ def cmd_autoactualizar(yes: bool) -> int:
     if not fetch.ok:
         console.print("No se pudo consultar el repositorio remoto:\n" + escape(fetch.text))
         return 1
-    log = system.run(git + ["log", "--oneline", "HEAD..@{u}"])
-    if not log.ok:
-        console.print("La instalación no sigue ninguna rama remota:\n" + escape(log.text))
+    # Se fija el commit remoto una vez: lo que se anuncia es exactamente lo que se instala.
+    up = system.run(git + ["rev-parse", "--verify", "--quiet", "@{u}^{commit}"])
+    target = up.out.strip()
+    if not up.ok or not re.fullmatch(r"[0-9a-f]{40,64}", target):
+        console.print("La instalación no sigue ninguna rama remota:\n" + escape(up.text))
         return 1
-    behind = log.out.strip()
-    if not behind:
+    count = system.run(git + ["rev-list", "--count", f"HEAD..{target}"])
+    if not count.ok:
+        console.print("No se pudo comparar con la versión remota:\n" + escape(count.text))
+        return 1
+    if count.out.strip() == "0":
         console.print(f"[green]{NAME} {VERSION} ya es la última versión.[/]")
         return 0
-    console.print("Cambios disponibles:\n" + escape(behind))
+    nueva = _remote_version(git, target)
+    console.print(f"Hay una versión nueva de {NAME}.\n  Versión actual: {VERSION}\n  Versión nueva:  "
+                  + (nueva if nueva and nueva != VERSION
+                     else f"{nueva} (revisión {target[:7]})" if nueva else f"revisión {target[:7]}"))
     if not yes and not _ask_yes("¿Actualizar ahora?"):
         console.print("Cancelado.")
         return 1
     before = system.run(git + ["rev-parse", "HEAD"]).out.strip()
-    r = system.run(git + ["merge", "--ff-only", "@{u}"])
-    console.print(r.text, markup=False)
+    r = system.run(git + ["merge", "--ff-only", "--quiet", target])
     if not r.ok:
+        console.print("No se pudo actualizar (¿hay cambios locales en la instalación?):\n" + escape(r.text))
         return 1
     changed = system.run(git + ["diff", "--name-only", before, "HEAD"]).out.split()
     pip = repo / ".venv" / "bin" / "pip"
@@ -302,8 +322,8 @@ def cmd_autoactualizar(yes: bool) -> int:
                           + f"\nSe ha vuelto a la versión anterior ({before[:10]}).")
             audit.record("autoactualizar", NAME, "REVERTIDO", "fallaron las dependencias")
             return 1
-    audit.record("autoactualizar", NAME, "OK", behind.splitlines()[0] if behind else "")
-    console.print(f"[green]{NAME} actualizado.[/]")
+    audit.record("autoactualizar", NAME, "OK", f"{VERSION} -> {nueva or 'desconocida'}")
+    console.print(f"[green]{NAME} actualizado a la versión {nueva or 'nueva'}.[/]")
     if "install.sh" in changed:
         console.print(f"[yellow]El instalador ha cambiado: ejecuta {escape(str(repo / 'install.sh'))} para aplicar "
                       "los cambios del lanzador y de los permisos.[/]")
