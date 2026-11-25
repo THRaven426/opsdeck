@@ -3,7 +3,9 @@
 Las versiones anteriores a la 2.4.2 están descritas en
 [Releases](https://github.com/THRaven426/opsdeck/releases).
 
-## Sin publicar
+## 2.4.3 — 2026-11-25 — Aviso de actualización más claro
+
+Versión de parche. No cambia los módulos, la configuración ni el lanzador.
 
 - `autoactualizar` ya no lista los commits pendientes: solo indica la versión instalada y la nueva antes
   de pedir confirmación, e instala exactamente el commit anunciado. El número de versión remoto se lee
